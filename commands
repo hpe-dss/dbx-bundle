@@ -1,0 +1,12 @@
+dbx-bundle () {
+  local script_path
+  script_path="$(realpath "$HOME/scripts/dbx-bundle.sh")"
+  
+  [[ -e "$script_path" ]] || {
+    echo "Error: dbx-bundle.sh not found." >&2
+    return 1
+  }
+  chmod +x "$script_path" 
+  "$script_path" "$@" 
+  chmod -x "$script_path" 
+}
