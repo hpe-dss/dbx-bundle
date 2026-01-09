@@ -7,7 +7,7 @@ set -euo pipefail
 TARGET=""
 OP=""
 CLI_ARGS=()
-ALLOWED_OPS=( 'deploy' 'validate' )
+ALLOWED_OPS=( 'deploy' 'validate' 'destroy' 'summary' 'deployment' )
 
 RESOURCES_FOLDER='resources'
 PY_SCRIPT="$(realpath "$HOME/scripts/yaml_comments_preprocessor.py")"
