@@ -1,0 +1,4 @@
+current-git-db: work
+git-dbs:
+  work:
+    folder_name: .git-work
