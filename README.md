@@ -6,6 +6,51 @@ Install or update everything with:
 ./install.sh
 ```
 
+## Poetry compatibility and installation
+
+Compatible Poetry versions for this project:
+
+- Recommended: `2.x`
+- Tested: `2.1.1`
+- Supported range: `>=2.0.0,<3.0.0`
+
+How to install Poetry manually (official installer):
+
+```bash
+curl -sSL https://install.python-poetry.org | python3 -
+export PATH="$HOME/.local/bin:$PATH"
+poetry --version
+```
+
+If you want to pin Poetry version during installer execution:
+
+```bash
+POETRY_VERSION=2.1.1 ./install.sh
+# or
+POETRY_VERSION=2.1.1 ./install_deps.sh
+```
+
+If your current Poetry version is not compatible, uninstall it first and then install a compatible version:
+
+```bash
+poetry --version
+```
+
+Uninstall current Poetry:
+
+```bash
+curl -sSL https://install.python-poetry.org | python3 - --uninstall
+rm -f "$HOME/.local/bin/poetry"
+```
+
+Install a compatible Poetry version:
+
+```bash
+curl -sSL https://install.python-poetry.org | POETRY_VERSION=2.1.1 python3 -
+export PATH="$HOME/.local/bin:$PATH"
+poetry --version
+```
+
 `install.sh` does the following:
 - Copies the project scripts to `~/scripts/dbx/`.
 - Runs `set_databricks_cli.sh` to install or update Databricks CLI.
