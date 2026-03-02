@@ -2,3 +2,5 @@ current-git-db: work
 git-dbs:
   work:
     folder_name: .git-work
+  personal:
+    folder_name: .git-personal

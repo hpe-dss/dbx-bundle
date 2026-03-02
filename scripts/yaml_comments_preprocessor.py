@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-────────────────────────────────────────────────────────────────────────
-Directives on YAML Comments
-────────────────────────────────────────────────────────────────────────
-# N: IF ( cond )          …  # N: FI
-     · nesting with N identifier.
-# RNMIF ( cond ) new_attr
-     · renames next yaml key if condition is true.
-# RNMIF ( cond ) find | replace
-     · replaces just first ocurrence of <find> inside next YAML value.
+"""Preprocess YAML files using conditional directives declared as comments.
 
-conditions   :  var  ==, !=, in, not in   literal
-variables     :  ctx["target"] (-t) + declared with -DVAR=value
-validate mode :  --check  (-t not required)
+Supported directives:
+- `# N: IF (condition)` ... `# N: FI`: conditionally include/exclude blocks.
+- `# RNMIF (condition) new_key`: rename the next YAML key if condition is true.
+- `# RNMIF (condition) find | replace`: update text in the next YAML value.
 
-Samples:
-  python yaml_comments_preprocessor.py -t prod -i in.yml -o out.yml
-  python yaml_comments_preprocessor.py --check  -i in.yml
-  python yaml_comments_preprocessor.py -t qa -Dregion='"us-east1"' -i in.yml
+Conditions:
+- Format: `<variable> <operator> <literal>`
+- Operators: `==`, `!=`, `in`, `not in`
+- Variables: `target` (from `-t`) and additional values from `-DVAR=value`
+
+Execution modes:
+- Transform mode: apply directives and emit transformed YAML.
+- Check mode (`--check`): validate directives and conditions without writing output.
 """
 
 import argparse

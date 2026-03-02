@@ -1,0 +1,23 @@
+[project]
+name = "dbx"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Frnk"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml (>=6.0.3,<7.0.0)"
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.2"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
