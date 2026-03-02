@@ -178,6 +178,61 @@ ensure_poetry() {
   log "Poetry installed: $(command -v poetry)"
 }
 
+ensure_poetry_non_package_mode() {
+  local pyproject_file="${SCRIPT_DIR}/pyproject.toml"
+  [[ -f "$pyproject_file" ]] || fail "pyproject.toml not found at ${pyproject_file}"
+
+  if awk '
+    BEGIN { in_section=0; ok=0 }
+    /^\[tool\.poetry\]/ { in_section=1; next }
+    /^\[.*\]/ { if (in_section) in_section=0 }
+    in_section && /^[[:space:]]*package-mode[[:space:]]*=[[:space:]]*false([[:space:]]*#.*)?$/ { ok=1 }
+    END { exit ok ? 0 : 1 }
+  ' "$pyproject_file"; then
+    return 0
+  fi
+
+  local tmp_file
+  tmp_file="$(mktemp)"
+
+  if grep -q '^\[tool\.poetry\]' "$pyproject_file"; then
+    awk '
+      BEGIN { in_section=0; inserted=0 }
+      /^\[tool\.poetry\]/ {
+        print
+        in_section=1
+        next
+      }
+      in_section && /^\[.*\]/ {
+        if (!inserted) {
+          print "package-mode = false"
+          inserted=1
+        }
+        in_section=0
+      }
+      in_section && /^[[:space:]]*package-mode[[:space:]]*=/ {
+        if (!inserted) {
+          print "package-mode = false"
+          inserted=1
+        }
+        next
+      }
+      { print }
+      END {
+        if (in_section && !inserted) {
+          print "package-mode = false"
+        }
+      }
+    ' "$pyproject_file" > "$tmp_file"
+  else
+    cat "$pyproject_file" > "$tmp_file"
+    printf "\n[tool.poetry]\npackage-mode = false\n" >> "$tmp_file"
+  fi
+
+  mv "$tmp_file" "$pyproject_file"
+  log "Configured Poetry with package-mode = false in pyproject.toml"
+}
+
 configure_local_venv() {
   local desired_venv="${SCRIPT_DIR}/${VENV_DIR}"
 
@@ -195,6 +250,7 @@ configure_local_venv() {
 main() {
   ensure_python
   ensure_poetry
+  ensure_poetry_non_package_mode
   configure_local_venv
 
   log "Installing project dependencies from pyproject.toml with Poetry"
