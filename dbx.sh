@@ -7,8 +7,9 @@ set -euo pipefail
 # - Interpolate SQL parameters for tasks marked for interpolation.
 # - Execute databricks bundle operations.
 # - Roll back SQL interpolation only after successful bundle execution.
+# - Support a compile-only mode that leaves preprocessed files in place.
 
-ALLOWED_OPS=( 'deploy' 'validate' 'destroy' 'summary' 'deployment' )
+ALLOWED_OPS=( 'deploy' 'validate' 'destroy' 'summary' 'deployment' 'compile' )
 ORIGINAL_ARGS=("$@")
 
 # If subcommand is not "bundle", forward everything to Databricks CLI.
@@ -62,14 +63,15 @@ Usage:
   dbx.sh <any-non-bundle-databricks-subcommand> [args...]
 
 Supported operations:
-  deploy, validate, destroy, summary, deployment
+  deploy, validate, destroy, summary, deployment, compile
 
 What this wrapper does:
   1) Validates YAML comment directives in bundle resource YAML files.
   2) Applies YAML preprocessing for the selected target.
   3) Runs SQL parameter interpolation for the selected target.
-  4) Executes `databricks bundle <operation> ...`.
-  5) If successful, runs SQL rollback to restore original SQL files.
+  4) For non-compile ops, executes `databricks bundle <operation> ...`.
+  5) For non-compile ops, if successful, runs SQL rollback to restore original SQL files.
+  6) For `compile`, it skips Databricks CLI and keeps preprocessed YAML/SQL files.
 
 Options:
   --w-verbose            Show detailed output only for wrapper steps.
@@ -237,7 +239,18 @@ ensure_wrapper_virtual_environment
 
 
 declare -A BACKUPS=()
-restore(){ for f in "${!BACKUPS[@]}"; do mv -f "${BACKUPS[$f]}" "$f"; done; }
+KEEP_PREPROCESSED_FILES=false
+if [[ "$OP" == "compile" ]]; then
+    KEEP_PREPROCESSED_FILES=true
+fi
+restore() {
+    if [[ "$KEEP_PREPROCESSED_FILES" == "true" ]]; then
+        return 0
+    fi
+    for f in "${!BACKUPS[@]}"; do
+        mv -f "${BACKUPS[$f]}" "$f"
+    done
+}
 trap restore EXIT INT TERM
 
 if [[ -d "$RESOURCES_FOLDER" ]]; then
@@ -251,7 +264,11 @@ if [[ -d "$RESOURCES_FOLDER" ]]; then
 
     echo ">> Applying YAML preprocessing for target: $TARGET"
     while IFS= read -r -d '' yml; do
-        bak="${yml%.yml}.bak.$$"; cp "$yml" "$bak"; BACKUPS["$yml"]="$bak"
+        if [[ "$KEEP_PREPROCESSED_FILES" != "true" ]]; then
+            bak="${yml%.yml}.bak.$$"
+            cp "$yml" "$bak"
+            BACKUPS["$yml"]="$bak"
+        fi
         run_step "YAML preprocessing failed in $yml" \
             wrapper \
             run_python "$YAML_PREPROCESSOR_SCRIPT" -t "$TARGET" -i "$yml" -o "$yml"
@@ -270,6 +287,12 @@ if [[ -d "$RESOURCES_FOLDER" ]]; then
     run_step "SQL interpolation failed for target '$TARGET'" \
         wrapper \
         run_python "$SQL_INTERPOLATOR_SCRIPT" "$TARGET" --bundle-file "$BUNDLE_FILE"
+
+    if [[ "$OP" == "compile" ]]; then
+        echo ">> Compile operation completed. Databricks CLI execution skipped."
+        echo ">> Preprocessed YAML and interpolated SQL files were kept without rollback."
+        exit 0
+    fi
 
     BUNDLE_ARGS=("${CLI_ARGS[@]}" "-t" "$TARGET")
     if [[ "$FULL_VERBOSE" == "true" ]]; then

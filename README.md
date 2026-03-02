@@ -68,11 +68,13 @@ Commands installed by `install.sh`:
 
 - If the first argument is not `bundle`, it forwards all arguments directly to `databricks`.
 - If the first argument is `bundle` but the operation is not one of the supported wrapper ops, it also forwards directly to `databricks`.
-- If it is `bundle` with a supported operation (`deploy`, `validate`, `destroy`, `summary`, `deployment`), it runs the wrapper flow:
+- If it is `bundle` with a supported operation (`deploy`, `validate`, `destroy`, `summary`, `deployment`, `compile`), it runs the wrapper flow:
   - validates and preprocesses YAML resources,
   - interpolates SQL parameters,
-  - executes `databricks bundle ...`,
-  - rolls back SQL interpolation on success.
+  - for non-`compile` operations, executes `databricks bundle ...`,
+  - for non-`compile` operations, rolls back SQL interpolation on success.
+- For `compile`, it only preprocesses YAML + interpolates SQL and does not execute Databricks CLI.
+- For `compile`, preprocessed YAML and SQL files are intentionally kept (no rollback).
 
 ### YAML preprocessing directives
 
@@ -160,6 +162,7 @@ Examples:
 dbx fs ls dbfs:/
 dbx bundle validate -t dev
 dbx bundle deploy -t prod -- --var release_id=2026_02_25
+dbx bundle compile -t dev
 ```
 
 ## `set-databricks-cli` command
