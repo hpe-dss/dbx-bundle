@@ -28,6 +28,7 @@ PARAM_PATTERN = re.compile(r"(?<!:):([A-Za-z_][A-Za-z0-9_]*)\b")
 VAR_REF_PATTERN = re.compile(r"\$\{var\.([A-Za-z_][A-Za-z0-9_]*)\}")
 BUNDLE_REF_PATTERN = re.compile(r"\$\{bundle\.([A-Za-z_][A-Za-z0-9_]*)\}")
 TASK_KEY_LINE = re.compile(r'^\s*-\s*task_key\s*:\s*["\']?([^"\']+)["\']?\s*$')
+NOTEBOOK_HEADER = "-- Databricks notebook source\n"
 
 
 @dataclass
@@ -54,6 +55,15 @@ class ProcessingStats:
         """Accumulate stats from another partial run."""
         self.files += other.files
         self.replacements += other.replacements
+
+
+@dataclass
+class InterpolationResult:
+    """Tracks interpolation and notebook-header normalization results."""
+
+    replacements: int = 0
+    modified: bool = False
+    header_added: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -421,11 +431,20 @@ def resolve_sql_local_path(sql_path: str, bundle_dir: Path, resource_file: Path)
     return None
 
 
+def ensure_sql_notebook_header(content: str) -> tuple[str, bool]:
+    """Ensure SQL file starts with Databricks notebook header and blank line."""
+    if content.startswith(f"{NOTEBOOK_HEADER}"):
+        return content, False
+    else:
+        return f"{NOTEBOOK_HEADER}{content}", True
+
+
 def interpolate_sql_file(
     sql_file: Path, params: dict[str, Any], target: str, dry_run: bool
-) -> int:
-    """Replace `:param` tokens in SQL and return replacement count."""
+) -> InterpolationResult:
+    """Replace `:param` tokens in SQL and normalize notebook header."""
     original = sql_file.read_text(encoding="utf-8")
+    normalized, header_added = ensure_sql_notebook_header(original)
     replaced_count = 0
 
     def replacer(match: re.Match[str]) -> str:
@@ -436,13 +455,18 @@ def interpolate_sql_file(
         replaced_count += 1
         return format_sql_literal(params[key])
 
-    updated = PARAM_PATTERN.sub(replacer, original)
+    updated = PARAM_PATTERN.sub(replacer, normalized)
+    modified = updated != original
 
-    if not dry_run and updated != original:
+    if not dry_run and modified:
         backup_file(sql_file, target)
         sql_file.write_text(updated, encoding="utf-8")
 
-    return replaced_count
+    return InterpolationResult(
+        replacements=replaced_count,
+        modified=modified,
+        header_added=header_added,
+    )
 
 
 def process_task(
@@ -488,17 +512,22 @@ def process_task(
     for key in sorted(params):
         print(f"  {key}={stringify_scalar(params[key])}")
 
-    replacements = interpolate_sql_file(
+    interpolation = interpolate_sql_file(
         sql_file, params=params, target=ctx.target, dry_run=ctx.dry_run
     )
 
-    if replacements == 0:
+    if not interpolation.modified:
         print("  NO CHANGES")
         return ProcessingStats()
 
     action = "DRY-RUN" if ctx.dry_run else "UPDATED"
-    print(f"  {action}: {replacements} replacements")
-    return ProcessingStats(files=1, replacements=replacements)
+    details: list[str] = []
+    if interpolation.replacements > 0:
+        details.append(f"{interpolation.replacements} replacements")
+    if interpolation.header_added:
+        details.append("added notebook header")
+    print(f"  {action}: {', '.join(details)}")
+    return ProcessingStats(files=1, replacements=interpolation.replacements)
 
 
 def process_resource_file(resource_file: Path, ctx: RuntimeContext) -> ProcessingStats:
