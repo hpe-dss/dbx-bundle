@@ -44,7 +44,7 @@ ROLLBACK_ONLY=false
 CLI_ARGS=()
 
 WRAPPER_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUNDLE_ROOT="${BUNDLE_ROOT:-dabs/testbundle}"
+BUNDLE_ROOT="${BUNDLE_ROOT:-.}"
 BUNDLE_FILE="${BUNDLE_FILE:-${BUNDLE_ROOT}/databricks.yml}"
 RESOURCES_FOLDER="${BUNDLE_ROOT}/resources"
 YAML_PREPROCESSOR_SCRIPT="${WRAPPER_HOME}/scripts/yaml_comments_preprocessor.py"
@@ -78,7 +78,7 @@ Options:
   --verbose              Show detailed output for wrapper + databricks bundle.
   --w-rollback           Wrapper-only mode: YAML preprocess + SQL rollback, no bundle execution.
   --w-help               Show this help message.
-  BUNDLE_ROOT            Bundle root path (default: dabs/testbundle).
+  BUNDLE_ROOT            Bundle root path (default: current directory).
   BUNDLE_FILE            Bundle file path (default: <BUNDLE_ROOT>/databricks.yml).
 
 Compatibility aliases (legacy):
