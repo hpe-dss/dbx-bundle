@@ -66,15 +66,26 @@ Commands installed by `install.sh`:
 
 `dbx` acts as a front command for `databricks`:
 
+- If first argument is `--help`, it shows wrapper help and then forwards to `databricks --help`.
 - If the first argument is not `bundle`, it forwards all arguments directly to `databricks`.
 - If the first argument is `bundle` but the operation is not one of the supported wrapper ops, it also forwards directly to `databricks`.
-- If it is `bundle` with a supported operation (`deploy`, `validate`, `destroy`, `summary`, `deployment`, `compile`), it runs the wrapper flow:
+- If it is `bundle` with a supported operation (`deploy`, `validate`, `destroy`, `summary`, `deployment`, `compile`, `rb-compile`), it runs the wrapper flow:
   - validates and preprocesses YAML resources,
   - interpolates SQL parameters,
   - for non-`compile` operations, executes `databricks bundle ...`,
   - for non-`compile` operations, rolls back SQL interpolation on success.
 - For `compile`, it only preprocesses YAML + interpolates SQL and does not execute Databricks CLI.
-- For `compile`, preprocessed YAML and SQL files are intentionally kept (no rollback).
+- For `compile`, preprocessed YAML and SQL files are intentionally kept (no rollback), and YAML backups are saved as `*.yamlpp.bak`.
+- For `rb-compile`, it skips Databricks CLI and rolls back:
+  - SQL files from `*.TARGET.dab.bak` backups (if they exist),
+  - YAML files from `*.TARGET.yamlpp.bak` backups (if they exist), deleting restored YAML backups.
+
+Wrapper options and env vars:
+
+- `--verbose`: print detailed logs from wrapper steps and pass `--verbose` to `databricks bundle`.
+- `-t|--target <target>`: required for wrapper bundle operations.
+- `BUNDLE_ROOT`: bundle root directory (default: current directory `.`).
+- `BUNDLE_FILE`: bundle config path (default: `<BUNDLE_ROOT>/databricks.yml`).
 
 ### YAML preprocessing directives
 
@@ -163,6 +174,7 @@ dbx fs ls dbfs:/
 dbx bundle validate -t dev
 dbx bundle deploy -t prod -- --var release_id=2026_02_25
 dbx bundle compile -t dev
+dbx bundle rb-compile -t dev
 ```
 
 ## `set-databricks-cli` command
