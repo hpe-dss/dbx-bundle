@@ -13,14 +13,14 @@ set -euo pipefail
 ALLOWED_OPS=( 'deploy' 'validate' 'destroy' 'summary' 'deployment' 'compile' 'rb-compile' )
 ORIGINAL_ARGS=("$@")
 
-WRAPPER_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DBX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_ROOT="${BUNDLE_ROOT:-.}"
 BUNDLE_FILE="${BUNDLE_FILE:-${BUNDLE_ROOT}/databricks.yml}"
 RESOURCES_FOLDER="${BUNDLE_ROOT}/resources"
-YAML_PREPROCESSOR_SCRIPT="${WRAPPER_HOME}/scripts/yaml_comments_preprocessor.py"
-SQL_INTERPOLATOR_SCRIPT="${WRAPPER_HOME}/scripts/sql_param_interpolator.py"
-WRAPPER_VENV_PYTHON="${WRAPPER_HOME}/.venv/bin/python"
-WRAPPER_INSTALL_SCRIPT="${WRAPPER_HOME}/install_deps.sh"
+YAML_PREPROCESSOR_SCRIPT="${DBX_HOME}/scripts/yaml_comments_preprocessor.py"
+SQL_INTERPOLATOR_SCRIPT="${DBX_HOME}/scripts/sql_param_interpolator.py"
+WRAPPER_VENV_PYTHON="${DBX_HOME}/.venv/bin/python"
+WRAPPER_INSTALL_SCRIPT="${DBX_HOME}/install_deps.sh"
 
 TARGET=""
 OP=""
@@ -80,14 +80,7 @@ in_list() {
 run_python() {
     local helper_script="$1"
     shift
-    poetry --directory "$WRAPPER_HOME" run python "$helper_script" "$@"
-}
-
-run_bundle_cli() {
-    (
-      cd "$BUNDLE_ROOT"
-      databricks bundle "$@"
-    )
+    poetry --directory "$DBX_HOME" run python "$helper_script" "$@"
 }
 
 print_failure_log() {
@@ -170,14 +163,12 @@ if [[ "${1:-}" != "bundle" ]]; then
     exec databricks "${ORIGINAL_ARGS[@]}"
     exit 0
 fi
-CLI_ARGS+=('bundle')
 shift 
 
 # If "bundle" doesn't include a supported operation, forward to Databricks CLI.
 SUPPORTED_BUNDLE_OP=false
 if in_list "$1" "${ALLOWED_OPS[@]}" ; then 
     SUPPORTED_BUNDLE_OP=true
-    CLI_ARGS+=("$1")
     OP=$1
 fi
 if [[ "$SUPPORTED_BUNDLE_OP" != "true" ]]; then
@@ -190,7 +181,6 @@ shift
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --verbose)
-      CLI_ARGS+=("$1")
       WRAPPER_VERBOSE=true
       shift
       ;;
@@ -216,20 +206,29 @@ command -v poetry >/dev/null 2>&1 || { echo "Error: poetry is required but not i
 
 ensure_dbx_venv
 
-if [[ "$OP" == "compile" ]]; then
-    KEEP_PREPROCESSED_FILES=true
-fi
-restore() {
-    if [[ "$KEEP_PREPROCESSED_FILES" == "true" ]]; then
-        return 0
-    fi
-    for f in "${!BACKUPS[@]}"; do
-        mv -f "${BACKUPS[$f]}" "$f"
-    done
-}
-trap restore EXIT INT TERM
+# Resolve bundle root from databricks.yml path.
+BUNDLE_ROOT="$(cd "$(dirname "$BUNDLE_FILE")" && pwd)"
+BUNDLE_FILE="${BUNDLE_ROOT}/$(basename "$BUNDLE_FILE")"
 
-if [[ -d "$RESOURCES_FOLDER" ]]; then
+# Execute full wrapper flow in a subshell rooted at bundle directory.
+(
+    cd "$BUNDLE_ROOT"
+    RESOURCES_FOLDER="resources"
+    [[ -d "$RESOURCES_FOLDER" ]] || { echo "Error: $RESOURCES_FOLDER folder not found in bundle root: $BUNDLE_ROOT" >&2; exit 1; }
+
+    if [[ "$OP" == "compile" ]]; then
+        KEEP_PREPROCESSED_FILES=true
+    fi
+    restore() {
+        if [[ "$KEEP_PREPROCESSED_FILES" == "true" ]]; then
+            return 0
+        fi
+        for f in "${!BACKUPS[@]}"; do
+            mv -f "${BACKUPS[$f]}" "$f"
+        done
+    }
+    trap restore EXIT INT TERM
+
     if [[ "$OP" == "rb-compile" ]]; then
         echo ">> rb-compile operation: rolling back SQL and YAML compile artifacts for target: $TARGET"
         run_step "SQL rollback failed for target '$TARGET'" run_python "$SQL_INTERPOLATOR_SCRIPT" "$TARGET" --bundle-file "$BUNDLE_FILE" --rollback
@@ -264,13 +263,14 @@ if [[ -d "$RESOURCES_FOLDER" ]]; then
         exit 0
     fi
 
-    BUNDLE_ARGS=("${CLI_ARGS[@]}")
+    BUNDLE_ARGS=("$OP" "${CLI_ARGS[@]}")
+    if [[ "$WRAPPER_VERBOSE" == "true" ]]; then
+        BUNDLE_ARGS+=("--verbose")
+    fi
 
     echo ">> Executing Databricks bundle operation: ${BUNDLE_ARGS[*]}"
-    run_step "databricks bundle command failed" run_bundle_cli "${BUNDLE_ARGS[@]}"
+    run_step "databricks bundle command failed" databricks bundle "${BUNDLE_ARGS[@]}"
 
     echo ">> Bundle completed successfully. Rolling back interpolated SQL files."
     run_step "SQL rollback failed for target '$TARGET'" run_python "$SQL_INTERPOLATOR_SCRIPT" "$TARGET" --bundle-file "$BUNDLE_FILE" --rollback
-else
-     echo "Error: $RESOURCES_FOLDER folder not found" >&2; exit 1; 
-fi
+)
