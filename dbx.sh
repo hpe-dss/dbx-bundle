@@ -80,7 +80,7 @@ in_list() {
 run_python() {
     local helper_script="$1"
     shift
-    poetry --directory "$DBX_HOME" run python "$helper_script" "$@"
+    "$WRAPPER_VENV_PYTHON" "$helper_script" "$@"
 }
 
 print_failure_log() {
