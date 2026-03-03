@@ -80,10 +80,7 @@ in_list() {
 run_python() {
     local helper_script="$1"
     shift
-    (
-      cd "$WRAPPER_HOME"
-      poetry run python "$helper_script" "$@"
-    )
+    poetry --directory "$WRAPPER_HOME" run python "$helper_script" "$@"
 }
 
 run_bundle_cli() {
