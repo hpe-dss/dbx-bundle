@@ -149,7 +149,8 @@ function Get-YamlBackupPath {
         [Parameter(Mandatory)] [string]$TargetName
     )
 
-    return "$YmlPath.$TargetName.yamlpp.bak"
+    $safeTarget = [System.Text.RegularExpressions.Regex]::Replace($TargetName, '[^A-Za-z0-9_.-]+', '_')
+    return "$YmlPath.$safeTarget.yamlpp.bak"
 }
 
 function Rollback-PreprocessedYaml {
@@ -296,7 +297,7 @@ try {
                 Copy-Item -LiteralPath $ymlPath -Destination $compileBackupFile -Force
             }
             elseif (-not $keepPreprocessedFiles) {
-                $bak = "$($ymlPath).bak.$pidValue"
+                $bak = "$(Get-YamlBackupPath -YmlPath $ymlPath -TargetName $target).$pidValue"
                 Copy-Item -LiteralPath $ymlPath -Destination $bak -Force
                 $backups[$ymlPath] = $bak
             }

@@ -142,7 +142,8 @@ Remove-Item Env:POETRY_VERSION -ErrorAction SilentlyContinue
   - for non-`compile` operations, executes `databricks bundle ...`,
   - for non-`compile` operations, rolls back SQL interpolation on success.
 - For `compile`, it only preprocesses YAML + interpolates SQL and does not execute Databricks CLI.
-- For `compile`, preprocessed YAML and SQL files are intentionally kept (no rollback), and YAML backups are saved as `*.yamlpp.bak`.
+- For `compile`, preprocessed YAML and SQL files are intentionally kept (no rollback), and YAML backups are saved as `*.TARGET.yamlpp.bak`.
+- For non-`compile` operations, temporary YAML backups also include `TARGET` in the filename (`*.TARGET.yamlpp.bak.<pid>`).
 - For `rb-compile`, it skips Databricks CLI and rolls back:
   - SQL files from `*.TARGET.dab.bak` backups (if they exist),
   - YAML files from `*.TARGET.yamlpp.bak` backups (if they exist), deleting restored YAML backups.

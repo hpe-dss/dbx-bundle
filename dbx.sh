@@ -132,7 +132,15 @@ ensure_dbx_venv() {
 yaml_backup_path() {
     local yml_path="$1"
     local target="$2"
-    echo "${yml_path}.${target}.yamlpp.bak"
+    local safe_target
+    safe_target="$(printf '%s' "$target" | sed -E 's/[^A-Za-z0-9_.-]+/_/g')"
+    echo "${yml_path}.${safe_target}.yamlpp.bak"
+}
+
+yaml_runtime_backup_path() {
+    local yml_path="$1"
+    local target="$2"
+    echo "$(yaml_backup_path "$yml_path" "$target").$$"
 }
 
 rollback_preprocessed_yaml() {
@@ -247,7 +255,7 @@ BUNDLE_FILE="${BUNDLE_ROOT}/$(basename "$BUNDLE_FILE")"
             compile_backup_file="$(yaml_backup_path "$yml" "$TARGET")"
             cp "$yml" "$compile_backup_file"
         elif [[ "$KEEP_PREPROCESSED_FILES" != "true" ]]; then
-            bak="${yml%.yml}.bak.$$"
+            bak="$(yaml_runtime_backup_path "$yml" "$TARGET")"
             cp "$yml" "$bak"
             BACKUPS["$yml"]="$bak"
         fi
