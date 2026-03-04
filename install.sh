@@ -73,39 +73,39 @@ cat >> "$BASHRC_FILE" <<BASHRC_SNIPPET
 
 $BASHRC_BLOCK_START
 dbx() {
-  local script_path="\$HOME/scripts/dbx/dbx.sh"
-  local exit_code
+  local script_path="${INSTALL_DIR}/dbx.sh"
 
   [[ -f "\$script_path" ]] || {
     echo "Error: dbx wrapper not found at \$script_path" >&2
     return 1
   }
 
-  chmod +x "\$script_path"
-  set +e
+  if [[ ! -x "\$script_path" ]]; then
+    chmod +x "\$script_path" || {
+      echo "Error: cannot set execute permission on \$script_path" >&2
+      return 1
+    }
+  fi
+
   "\$script_path" "\$@"
-  exit_code=\$?
-  set -e
-  chmod -x "\$script_path"
-  return "\$exit_code"
 }
 
 set-databricks-cli() {
-  local script_path="\$HOME/scripts/dbx/set_databricks_cli.sh"
-  local exit_code
+  local script_path="${INSTALL_DIR}/set_databricks_cli.sh"
 
   [[ -f "\$script_path" ]] || {
     echo "Error: set-databricks-cli script not found at \$script_path" >&2
     return 1
   }
 
-  chmod +x "\$script_path"
-  set +e
+  if [[ ! -x "\$script_path" ]]; then
+    chmod +x "\$script_path" || {
+      echo "Error: cannot set execute permission on \$script_path" >&2
+      return 1
+    }
+  fi
+
   "\$script_path" "\$@"
-  exit_code=\$?
-  set -e
-  chmod -x "\$script_path"
-  return "\$exit_code"
 }
 $BASHRC_BLOCK_END
 BASHRC_SNIPPET

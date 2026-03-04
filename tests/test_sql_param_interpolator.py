@@ -119,8 +119,19 @@ def test_get_include_patterns_and_expand_resource_files(tmp_path, spi):
     files = spi.expand_resource_files(bundle, patterns)
 
     assert files == sorted([a, b])
+    windows_patterns = spi.get_include_patterns({"include": [r"resources\*"]})
+    windows_files = spi.expand_resource_files(bundle, windows_patterns)
+    assert windows_files == sorted([a, b])
     assert spi.get_include_patterns({"include": "resources/*.yml"}) == ["resources/*.yml"]
     assert spi.get_include_patterns({"include": 123}) == []
+
+
+def test_localize_path_for_os_switches_by_platform(spi, monkeypatch):
+    monkeypatch.setattr(spi, "IS_WINDOWS", True)
+    assert spi.localize_path_for_os("resources/a.sql") == r"resources\a.sql"
+
+    monkeypatch.setattr(spi, "IS_WINDOWS", False)
+    assert spi.localize_path_for_os(r"resources\a.sql") == "resources/a.sql"
 
 
 def test_find_marked_task_keys(tmp_path, spi):
@@ -180,6 +191,7 @@ def test_extract_and_resolve_sql_path(tmp_path, spi):
 
     assert spi.resolve_sql_local_path("query.sql", tmp_path, resource) == sql.resolve()
     assert spi.resolve_sql_local_path("/Workspace/a.sql", tmp_path, resource) is None
+    assert spi.resolve_sql_local_path(r"\Workspace\a.sql", tmp_path, resource) is None
     assert spi.resolve_sql_local_path("dbfs:/a.sql", tmp_path, resource) is None
     assert spi.resolve_sql_local_path("https://x/a.sql", tmp_path, resource) is None
 
@@ -189,12 +201,18 @@ def test_interpolate_sql_file_dry_and_write(tmp_path, spi):
     sql.write_text("select :a, :b, ::type", encoding="utf-8")
 
     replaced = spi.interpolate_sql_file(sql, {"a": "x", "b": 2}, "dev", dry_run=True)
-    assert replaced == 2
+    assert replaced.replacements == 2
+    assert replaced.modified is True
+    assert replaced.header_added is True
     assert sql.read_text(encoding="utf-8") == "select :a, :b, ::type"
 
     replaced = spi.interpolate_sql_file(sql, {"a": "x", "b": 2}, "dev", dry_run=False)
-    assert replaced == 2
-    assert sql.read_text(encoding="utf-8") == "select 'x', 2, ::type"
+    assert replaced.replacements == 2
+    assert replaced.modified is True
+    assert replaced.header_added is True
+    assert sql.read_text(encoding="utf-8") == (
+        "-- Databricks notebook source\nselect 'x', 2, ::type"
+    )
     assert spi.build_backup_path(sql, "dev").exists()
 
 
@@ -205,8 +223,12 @@ def test_interpolate_sql_file_preserves_single_quoted_param(tmp_path, spi):
     replaced = spi.interpolate_sql_file(
         sql, {"path": "'/tmp/dbx/delta/clientes_master'"}, "dev", dry_run=False
     )
-    assert replaced == 1
-    assert sql.read_text(encoding="utf-8") == "LOCATION '/tmp/dbx/delta/clientes_master'"
+    assert replaced.replacements == 1
+    assert replaced.modified is True
+    assert replaced.header_added is True
+    assert sql.read_text(encoding="utf-8") == (
+        "-- Databricks notebook source\nLOCATION '/tmp/dbx/delta/clientes_master'"
+    )
 
 
 def test_process_task_non_sql_and_non_local(tmp_path, spi, capsys):

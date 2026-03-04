@@ -94,7 +94,7 @@ $profileContent = [regex]::Replace($profileContent, $pattern, '')
 $snippet = @"
 $profileBlockStart
 function dbx {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]`$Args)
+    param([Parameter(ValueFromRemainingArguments = `$true)][string[]]`$Args)
     `$scriptPath = Join-Path `$HOME 'scripts/dbx/dbx.ps1'
     if (-not (Test-Path -LiteralPath `$scriptPath -PathType Leaf)) {
         Write-Error "dbx wrapper not found at `$scriptPath"
@@ -105,7 +105,7 @@ function dbx {
 }
 
 function set-databricks-cli {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]`$Args)
+    param([Parameter(ValueFromRemainingArguments = `$true)][string[]]`$Args)
     `$scriptPath = Join-Path `$HOME 'scripts/dbx/set_databricks_cli.ps1'
     if (-not (Test-Path -LiteralPath `$scriptPath -PathType Leaf)) {
         Write-Error "set-databricks-cli script not found at `$scriptPath"

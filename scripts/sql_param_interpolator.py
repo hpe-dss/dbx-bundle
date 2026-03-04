@@ -29,6 +29,7 @@ VAR_REF_PATTERN = re.compile(r"\$\{var\.([A-Za-z_][A-Za-z0-9_]*)\}")
 BUNDLE_REF_PATTERN = re.compile(r"\$\{bundle\.([A-Za-z_][A-Za-z0-9_]*)\}")
 TASK_KEY_LINE = re.compile(r'^\s*-\s*task_key\s*:\s*["\']?([^"\']+)["\']?\s*$')
 NOTEBOOK_HEADER = "-- Databricks notebook source\n"
+IS_WINDOWS = sys.platform.startswith("win")
 
 
 @dataclass
@@ -274,9 +275,16 @@ def sanitize_target(target: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", target)
 
 
+def localize_path_for_os(path_value: str) -> str:
+    """Normalize path separators for current OS."""
+    if IS_WINDOWS:
+        return path_value.replace("/", "\\")
+    return path_value.replace("\\", "/")
+
+
 def build_backup_path(sql_file: Path, target: str) -> Path:
     """Build target-scoped backup path for a SQL file."""
-    return Path(f"{sql_file}.{sanitize_target(target)}{BACKUP_SUFFIX}")
+    return sql_file.with_name(f"{sql_file.name}.{sanitize_target(target)}{BACKUP_SUFFIX}")
 
 
 def backup_file(sql_file: Path, target: str) -> Path:
@@ -322,7 +330,8 @@ def expand_resource_files(bundle_path: Path, patterns: list[str]) -> list[Path]:
     files: list[Path] = []
 
     for pattern in patterns:
-        for match in glob(str(base_dir / pattern), recursive=True):
+        normalized_pattern = localize_path_for_os(pattern)
+        for match in glob(str(base_dir / normalized_pattern), recursive=True):
             file_path = Path(match)
             if file_path.is_file() and file_path.suffix in {".yml", ".yaml"}:
                 files.append(file_path)
@@ -410,13 +419,13 @@ def extract_sql_path(task: dict[str, Any]) -> str:
 
 def resolve_sql_local_path(sql_path: str, bundle_dir: Path, resource_file: Path) -> Path | None:
     """Resolve local SQL path; ignore Workspace/DBFS/URL paths."""
-    lower = sql_path.lower()
+    lower = sql_path.replace("\\", "/").lower()
     if lower.startswith("/workspace/") or lower.startswith("dbfs:"):
         return None
-    if "://" in sql_path:
+    if "://" in lower:
         return None
 
-    candidate = Path(sql_path)
+    candidate = Path(localize_path_for_os(sql_path))
     if candidate.is_absolute():
         return candidate if candidate.exists() else None
 

@@ -15,8 +15,8 @@ $allowedOps = @('deploy', 'validate', 'destroy', 'summary', 'deployment', 'compi
 $originalArgs = @($ArgsFromCaller)
 
 $dbxHome = Split-Path -Parent $PSCommandPath
-$bundleRoot = if ($env:BUNDLE_ROOT) { $env:BUNDLE_ROOT } else { '.' }
-$bundleFile = if ($env:BUNDLE_FILE) { $env:BUNDLE_FILE } else { Join-Path $bundleRoot 'databricks.yml' }
+$bundleRoot = (Get-Location -PSProvider FileSystem).ProviderPath
+$bundleFile = ''
 $resourcesFolder = Join-Path $bundleRoot 'resources'
 $yamlPreprocessorScript = Join-Path $dbxHome 'scripts/yaml_comments_preprocessor.py'
 $sqlInterpolatorScript = Join-Path $dbxHome 'scripts/sql_param_interpolator.py'
@@ -29,6 +29,33 @@ $wrapperVerbose = $false
 $keepPreprocessedFiles = $false
 $backups = @{}
 $cliArgs = New-Object System.Collections.Generic.List[string]
+
+function Convert-ToWindowsPath {
+    param(
+        [Parameter(Mandatory)] [string]$PathValue,
+        [string]$BasePath = (Get-Location -PSProvider FileSystem).ProviderPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        throw 'Error: path value cannot be empty.'
+    }
+
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($PathValue.Trim())
+
+    if ([System.IO.Path]::IsPathRooted($expandedPath)) {
+        return ([System.IO.Path]::GetFullPath($expandedPath)).Replace('/', '\')
+    }
+
+    $resolvedBase = if ([string]::IsNullOrWhiteSpace($BasePath)) {
+        [System.IO.Directory]::GetCurrentDirectory()
+    }
+    else {
+        [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($BasePath.Trim()))
+    }
+
+    $combinedPath = Join-Path -Path $resolvedBase -ChildPath $expandedPath
+    return ([System.IO.Path]::GetFullPath($combinedPath)).Replace('/', '\')
+}
 
 function Print-Help {
 @'
@@ -55,9 +82,8 @@ What this wrapper does:
 
 Options:
   --verbose              Show detailed output for wrapper + databricks bundle.
+  --bundle-root <path>   Bundle root path (default: current directory).
   --help                 Show this help message.
-  BUNDLE_ROOT            Bundle root path (default: current directory).
-  BUNDLE_FILE            Bundle file path (default: <BUNDLE_ROOT>/databricks.yml).
 
 Examples:
   dbx bundle validate -t dev
@@ -66,6 +92,12 @@ Examples:
   dbx fs ls dbfs:/
 '@ | Write-Host
 }
+
+$dbxHome = Convert-ToWindowsPath -PathValue $dbxHome
+$yamlPreprocessorScript = Convert-ToWindowsPath -PathValue $yamlPreprocessorScript
+$sqlInterpolatorScript = Convert-ToWindowsPath -PathValue $sqlInterpolatorScript
+$wrapperVenvPython = Convert-ToWindowsPath -PathValue $wrapperVenvPython
+$wrapperInstallScript = Convert-ToWindowsPath -PathValue $wrapperInstallScript
 
 function Run-Python {
     param(
@@ -150,7 +182,8 @@ function Get-YamlBackupPath {
     )
 
     $safeTarget = [System.Text.RegularExpressions.Regex]::Replace($TargetName, '[^A-Za-z0-9_.-]+', '_')
-    return "$YmlPath.$safeTarget.yamlpp.bak"
+    $normalizedYmlPath = Convert-ToWindowsPath -PathValue $YmlPath
+    return "$normalizedYmlPath.$safeTarget.yamlpp.bak"
 }
 
 function Rollback-PreprocessedYaml {
@@ -214,6 +247,14 @@ while ($i -lt $workArgs.Count) {
             $i += 1
             continue
         }
+        '--bundle-root' {
+            if (($i + 1) -ge $workArgs.Count) {
+                throw 'Error: --bundle-root requires a value'
+            }
+            $bundleRoot = $workArgs[$i + 1]
+            $i += 2
+            continue
+        }
         '-t' {
             if (($i + 1) -ge $workArgs.Count) {
                 throw 'Error: -t|--target requires a value'
@@ -244,6 +285,9 @@ if ([string]::IsNullOrWhiteSpace($target)) {
 if ([string]::IsNullOrWhiteSpace($op)) {
     throw 'Error: you must give a valid operation argument'
 }
+$bundleRoot = Convert-ToWindowsPath -PathValue $bundleRoot
+$bundleFile = Convert-ToWindowsPath -PathValue (Join-Path $bundleRoot 'databricks.yml')
+$resourcesFolder = Convert-ToWindowsPath -PathValue (Join-Path $bundleRoot 'resources')
 Ensure-FileExists -PathValue $bundleFile -ErrorMessage "Error: bundle file not found at $bundleFile"
 Ensure-FileExists -PathValue $yamlPreprocessorScript -ErrorMessage "Error: yaml preprocessor script not found at $yamlPreprocessorScript"
 Ensure-FileExists -PathValue $sqlInterpolatorScript -ErrorMessage "Error: sql interpolator script not found at $sqlInterpolatorScript"
@@ -254,8 +298,9 @@ if (-not (Get-Command poetry -ErrorAction SilentlyContinue)) {
 Ensure-DbxVenv
 
 $bundleRootResolved = Split-Path -Parent (Resolve-Path -LiteralPath $bundleFile)
-$bundleFile = Join-Path $bundleRootResolved (Split-Path -Leaf $bundleFile)
-$resourcesFolder = Join-Path $bundleRootResolved 'resources'
+$bundleRootResolved = Convert-ToWindowsPath -PathValue $bundleRootResolved
+$bundleFile = Convert-ToWindowsPath -PathValue (Join-Path $bundleRootResolved (Split-Path -Leaf $bundleFile))
+$resourcesFolder = Convert-ToWindowsPath -PathValue (Join-Path $bundleRootResolved 'resources')
 
 Push-Location $bundleRootResolved
 try {
