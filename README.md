@@ -1,12 +1,62 @@
 # dbx CLI wrapper
 
-Install or update everything with:
+## Installation
+
+### Windows (PowerShell)
+
+Install or update everything:
+
+```powershell
+.\install.ps1
+```
+
+Clean reinstall (Databricks CLI + Python + Poetry + `.venv`):
+
+```powershell
+.\install.ps1 -Clean
+```
+
+Set specific Databricks CLI version:
+
+```powershell
+.\install.ps1 0.291.0
+```
+
+After install, commands are added to your PowerShell profile:
+- `dbx`
+- `set-databricks-cli`
+
+If needed, load profile manually:
+
+```powershell
+. $PROFILE
+```
+
+### Linux / macOS (bash)
+
+Install or update everything:
 
 ```bash
 ./install.sh
 ```
 
-## Poetry compatibility and installation
+Set specific Databricks CLI version:
+
+```bash
+./install.sh 0.291.0
+```
+
+After install:
+
+```bash
+source ~/.bashrc
+```
+
+Commands installed:
+- `dbx`
+- `set-databricks-cli`
+
+## Poetry compatibility and manual installation
 
 Compatible Poetry versions for this project:
 
@@ -14,7 +64,9 @@ Compatible Poetry versions for this project:
 - Tested: `2.1.1`
 - Supported range: `>=2.0.0,<3.0.0`
 
-How to install Poetry manually (official installer):
+### Linux / macOS
+
+Install Poetry manually (official installer):
 
 ```bash
 curl -sSL https://install.python-poetry.org | python3 -
@@ -22,7 +74,7 @@ export PATH="$HOME/.local/bin:$PATH"
 poetry --version
 ```
 
-If you want to pin Poetry version during installer execution:
+Pin Poetry version during installer execution:
 
 ```bash
 POETRY_VERSION=2.1.1 ./install.sh
@@ -30,7 +82,7 @@ POETRY_VERSION=2.1.1 ./install.sh
 POETRY_VERSION=2.1.1 ./install_deps.sh
 ```
 
-If your current Poetry version is not compatible, uninstall it first and then install a compatible version:
+If current Poetry version is not compatible, uninstall/reinstall:
 
 ```bash
 poetry --version
@@ -51,16 +103,31 @@ export PATH="$HOME/.local/bin:$PATH"
 poetry --version
 ```
 
-`install.sh` does the following:
-- Copies the project scripts to `~/scripts/dbx/`.
-- Runs `set_databricks_cli.sh` to install or update Databricks CLI.
-- Ensures Databricks CLI is on `PATH` (current shell and future sessions).
-- Runs `install_deps.sh` to install/update the local Python environment (`.venv`) with Poetry.
-- Adds/updates a managed block in `~/.bashrc` with helper commands.
+### Windows
 
-Commands installed by `install.sh`:
-- `dbx`: smart wrapper for Databricks CLI.
-- `set-databricks-cli`: command to set the Databricks CLI version.
+`install_deps.ps1` installs Poetry using Python 3.13 managed by global `pyenv-win`.
+
+Optional Poetry version pin:
+
+```powershell
+$env:POETRY_VERSION = "2.1.1"
+.\install.ps1
+```
+
+Clear pin after install:
+
+```powershell
+Remove-Item Env:POETRY_VERSION -ErrorAction SilentlyContinue
+```
+
+## What install scripts do
+
+`install.sh` / `install.ps1` do the following:
+- Copies the project scripts to `~/scripts/dbx/`.
+- Runs `set_databricks_cli.sh` / `set_databricks_cli.ps1` to install or update Databricks CLI.
+- Ensures Databricks CLI is on `PATH` (current shell and future sessions).
+- Runs `install_deps.sh` / `install_deps.ps1` to install/update local Python environment (`.venv`) with Poetry.
+- Adds/updates shell profile helpers (`~/.bashrc` on Linux/macOS, `$PROFILE` on Windows).
 
 ## `dbx` command
 
