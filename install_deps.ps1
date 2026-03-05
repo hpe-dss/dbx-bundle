@@ -411,8 +411,23 @@ function Configure-LocalVenv([string]$PoetryBin, [string]$PythonBin) {
 
     $env:POETRY_VIRTUALENVS_IN_PROJECT = 'true'
     Log 'Configuring Poetry: virtualenvs.prefer-active-python = true'
+    $preferActiveConfigured = $false
+
     & $PoetryBin config virtualenvs.prefer-active-python true | Out-Host
-    Assert-LastExitCode -Context 'poetry config virtualenvs.prefer-active-python true'
+    if ($LASTEXITCODE -eq 0) {
+        $preferActiveConfigured = $true
+    }
+    else {
+        Log 'Primary attempt failed. Retrying with: poetry config virtualenvs.prefer-active-python true'
+        & poetry config virtualenvs.prefer-active-python true | Out-Host
+        if ($LASTEXITCODE -eq 0) {
+            $preferActiveConfigured = $true
+        }
+    }
+
+    if (-not $preferActiveConfigured) {
+        Fail "Failed to apply: poetry config virtualenvs.prefer-active-python true"
+    }
 
     Log "Configuring local virtualenv at $desiredVenv"
     & $PoetryBin env use $PythonBin
