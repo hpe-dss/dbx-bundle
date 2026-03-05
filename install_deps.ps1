@@ -51,6 +51,88 @@ function Add-ToPath([string]$PathToAdd) {
     }
 }
 
+function Ensure-UserPathContains([string]$PathToAdd) {
+    if ([string]::IsNullOrWhiteSpace($PathToAdd)) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath $PathToAdd)) {
+        return
+    }
+
+    Add-ToPath $PathToAdd
+
+    $separator = [IO.Path]::PathSeparator
+    $userPathRaw = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $userPathParts = @()
+    if (-not [string]::IsNullOrWhiteSpace($userPathRaw)) {
+        $userPathParts = @($userPathRaw -split [regex]::Escape([string]$separator))
+    }
+
+    $exists = $false
+    foreach ($part in $userPathParts) {
+        if ($part.TrimEnd('\') -ieq $PathToAdd.TrimEnd('\')) {
+            $exists = $true
+            break
+        }
+    }
+
+    if (-not $exists) {
+        $newUserPath = if ($userPathParts.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($userPathRaw)) {
+            "$PathToAdd$separator$userPathRaw"
+        }
+        else {
+            $PathToAdd
+        }
+        [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+        Log "Added to user PATH: $PathToAdd"
+    }
+}
+
+function Get-PythonScriptsDir([string]$PythonBin) {
+    $scriptsDir = (& $PythonBin -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>$null | Select-Object -First 1).Trim()
+    if ([string]::IsNullOrWhiteSpace($scriptsDir)) {
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $scriptsDir -PathType Container)) {
+        return $null
+    }
+    return $scriptsDir
+}
+
+function Resolve-PoetryCommand([string]$PythonBin) {
+    $poetryCmd = Get-Command -Name poetry -ErrorAction SilentlyContinue
+    if ($poetryCmd) {
+        return $poetryCmd.Source
+    }
+
+    $scriptsDir = Get-PythonScriptsDir -PythonBin $PythonBin
+    if ($scriptsDir) {
+        $candidates = @(
+            (Join-Path $scriptsDir 'poetry.exe'),
+            (Join-Path $scriptsDir 'poetry.cmd'),
+            (Join-Path $scriptsDir 'poetry')
+        )
+        foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
+    }
+
+    $shimCandidates = @(
+        (Join-Path $pyenvRoot 'shims/poetry.exe'),
+        (Join-Path $pyenvRoot 'shims/poetry.cmd'),
+        (Join-Path $pyenvRoot 'shims/poetry.bat')
+    )
+    foreach ($shim in $shimCandidates) {
+        if (Test-Path -LiteralPath $shim -PathType Leaf) {
+            return $shim
+        }
+    }
+
+    return $null
+}
+
 function Get-PyenvCommand {
     $cmd = Get-Command -Name pyenv -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -78,8 +160,8 @@ function Get-PyenvInstalledVersions([string]$PyenvCmd) {
 }
 
 function Ensure-PyenvGlobal {
-    Add-ToPath (Join-Path $pyenvRoot 'bin')
-    Add-ToPath (Join-Path $pyenvRoot 'shims')
+    Ensure-UserPathContains (Join-Path $pyenvRoot 'bin')
+    Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
 
     $pyenvCmd = Get-PyenvCommand
     if ($pyenvCmd) {
@@ -101,8 +183,8 @@ function Ensure-PyenvGlobal {
         }
     }
 
-    Add-ToPath (Join-Path $pyenvRoot 'bin')
-    Add-ToPath (Join-Path $pyenvRoot 'shims')
+    Ensure-UserPathContains (Join-Path $pyenvRoot 'bin')
+    Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
 
     $pyenvCmd = Get-PyenvCommand
     if (-not $pyenvCmd) {
@@ -215,10 +297,10 @@ function Ensure-Python313([string]$PyenvCmd) {
 }
 
 function Ensure-Poetry([string]$PythonBin, [string]$PyenvCmd) {
-    $poetryCmd = Get-Command -Name poetry -ErrorAction SilentlyContinue
+    $poetryCmd = Resolve-PoetryCommand -PythonBin $PythonBin
     if ($poetryCmd -and -not $Clean) {
-        Log "Poetry detected: $($poetryCmd.Source)"
-        return $poetryCmd.Source
+        Log "Poetry detected: $poetryCmd"
+        return $poetryCmd
     }
 
     if ($Clean) {
@@ -240,15 +322,20 @@ function Ensure-Poetry([string]$PythonBin, [string]$PyenvCmd) {
     & $PyenvCmd rehash | Out-Host
     Assert-LastExitCode -Context 'pyenv rehash (poetry)'
 
-    Add-ToPath (Join-Path $pyenvRoot 'shims')
+    Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
 
-    $poetryCmd = Get-Command -Name poetry -ErrorAction SilentlyContinue
-    if (-not $poetryCmd) {
-        Fail 'Poetry installed but command not found in PATH.'
+    $scriptsDir = Get-PythonScriptsDir -PythonBin $PythonBin
+    if ($scriptsDir) {
+        Ensure-UserPathContains $scriptsDir
     }
 
-    Log "Poetry installed: $($poetryCmd.Source)"
-    return $poetryCmd.Source
+    $poetryCmd = Resolve-PoetryCommand -PythonBin $PythonBin
+    if (-not $poetryCmd) {
+        Fail 'Poetry installed but command was not resolved from PATH, pyenv shims, or Python Scripts directory.'
+    }
+
+    Log "Poetry installed: $poetryCmd"
+    return $poetryCmd
 }
 
 function Ensure-PoetryNonPackageMode {
