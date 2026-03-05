@@ -2,7 +2,7 @@
 param(
     [Parameter(Position = 0)]
     [string]$DatabricksCliVersion,
-    [string]$DbxReleaseVersion = $(if ($env:DBX_RELEASE_VERSION) { $env:DBX_RELEASE_VERSION } else { 'v1.0.0' }),
+    [string]$DbxReleaseVersion = $(if ($env:DBX_RELEASE_VERSION) { $env:DBX_RELEASE_VERSION } else { 'v1.0.1' }),
     [string]$DbxRepo = $(if ($env:DBX_REPO) { $env:DBX_REPO } else { 'hpe-dss/dbx-bundle' }),
     [switch]$Clean
 )

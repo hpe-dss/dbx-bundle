@@ -4,18 +4,18 @@
 
 ### One-command install (without cloning this repo)
 
-Version pinned to `v1.0.0`:
+Version pinned to `v1.0.1`:
 
 Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.1/install-remote.sh | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.ps1)))
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.1/install-remote.ps1)))
 ```
 
 Optional Databricks CLI version:
@@ -23,17 +23,17 @@ Optional Databricks CLI version:
 Linux / macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.sh | bash -s -- 0.291.0
+curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.1/install-remote.sh | bash -s -- 0.291.0
 ```
 
 Windows (PowerShell):
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.ps1))) -DatabricksCliVersion 0.291.0
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.1/install-remote.ps1))) -DatabricksCliVersion 0.291.0
 ```
 
 Optional installer environment variables:
-- `DBX_RELEASE_VERSION` (default: `v1.0.0`)
+- `DBX_RELEASE_VERSION` (default: `v1.0.1`)
 - `DBX_REPO` (default: `hpe-dss/dbx-bundle`)
 
 `install-remote.sh` / `install-remote.ps1` download release artifacts and verify SHA-256 checksums before running the installer.
@@ -161,7 +161,7 @@ Remove-Item Env:POETRY_VERSION -ErrorAction SilentlyContinue
 ## What install scripts do
 
 `install-remote.sh` / `install-remote.ps1`:
-- Download a tagged release package from GitHub (default tag `v1.0.0`).
+- Download a tagged release package from GitHub (default tag `v1.0.1`).
 - Verify package integrity against `SHA256SUMS`.
 - Execute local `install.sh` / `install.ps1` from the downloaded package.
 
@@ -202,18 +202,18 @@ Wrapper options and env vars:
 
 Release automation is configured in `.github/workflows/release.yml`.
 
-When a tag like `v1.0.0` is pushed, the workflow publishes:
-- `dbx-v1.0.0.tar.gz`
-- `dbx-v1.0.0.zip`
+When a tag like `v1.0.1` is pushed, the workflow publishes:
+- `dbx-v1.0.1.tar.gz`
+- `dbx-v1.0.1.zip`
 - `SHA256SUMS`
 
-Commands to publish `v1.0.0`:
+Commands to publish `v1.0.1`:
 
 ```bash
 git add .
-git commit -m "prepare release v1.0.0"
-git tag v1.0.0
-git push origin v1.0.0
+git commit -m "prepare release v1.0.1"
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 ### YAML preprocessing directives

@@ -6,15 +6,15 @@ set -euo pipefail
 # and executes install.sh from that package.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.sh | bash -s -- 0.291.0
+#   curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.1/install-remote.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.1/install-remote.sh | bash -s -- 0.291.0
 #
 # Optional env vars:
 #   DBX_REPO            GitHub repo in owner/name format (default: hpe-dss/dbx-bundle).
-#   DBX_RELEASE_VERSION Git release tag (default: v1.0.0).
+#   DBX_RELEASE_VERSION Git release tag (default: v1.0.1).
 
 DBX_REPO="${DBX_REPO:-hpe-dss/dbx-bundle}"
-DBX_RELEASE_VERSION="${DBX_RELEASE_VERSION:-v1.0.0}"
+DBX_RELEASE_VERSION="${DBX_RELEASE_VERSION:-v1.0.1}"
 DATABRICKS_CLI_VERSION="${1:-}"
 
 if [[ $# -gt 1 ]]; then
