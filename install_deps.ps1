@@ -422,8 +422,15 @@ function Configure-LocalVenv([string]$PoetryBin, [string]$PythonBin) {
         & poetry config virtualenvs.prefer-active-python true | Out-Host
         if ($LASTEXITCODE -eq 0) {
             $preferActiveConfigured = $true
+        } else {
+            Log 'Second attempt failed. Retrying with: poetry config virtualenvs.use-poetry-python false'
+            & poetry config virtualenvs.use-poetry-python false | Out-Host      
+            if ($LASTEXITCODE -eq 0) {
+                $preferActiveConfigured = $true
+            }  
         }
     }
+
 
     if (-not $preferActiveConfigured) {
         Fail "Failed to apply: poetry config virtualenvs.prefer-active-python true"
