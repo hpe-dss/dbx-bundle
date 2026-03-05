@@ -16,7 +16,11 @@ Set-Location $scriptDir
 $venvDir = if ($env:VENV_DIR) { $env:VENV_DIR } else { '.venv' }
 $poetryVersion = if ($env:POETRY_VERSION) { $env:POETRY_VERSION } else { '' }
 $pythonMajorMinor = '3.13'
-$pyenvRoot = Join-Path $HOME '.pyenv/pyenv-win'
+$pyenvRoot = Join-Path $HOME '.pyenv\pyenv-win'
+$pyenvMinVersion = [version]'3.1.0'
+$pyenvMaxExclusiveVersion = [version]'4.0.0'
+$poetryMinVersion = [version]'2.0.0'
+$poetryMaxExclusiveVersion = [version]'3.0.0'
 
 function Log([string]$Message) {
     Write-Host "==> $Message"
@@ -35,6 +39,28 @@ function Assert-LastExitCode([string]$Context) {
 function Write-Utf8NoBom([string]$Path, [string]$Value) {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $Value, $utf8NoBom)
+}
+
+function Is-ExecutableCommandPath([string]$PathValue) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $false
+    }
+    if (-not [IO.Path]::IsPathRooted($PathValue)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $PathValue -PathType Leaf)) {
+        return $false
+    }
+
+    $ext = [IO.Path]::GetExtension($PathValue)
+    if ([string]::IsNullOrWhiteSpace($ext)) {
+        $ext = ''
+    }
+    else {
+        $ext = $ext.ToLowerInvariant()
+    }
+
+    return @('.exe', '.cmd', '.bat') -contains $ext
 }
 
 function Ensure-UserPathContains([string]$PathToAdd) {
@@ -57,24 +83,21 @@ function Ensure-UserPathContains([string]$PathToAdd) {
         $userPathParts = @($userPathRaw -split [regex]::Escape([string]$separator))
     }
 
-    $exists = $false
     foreach ($part in $userPathParts) {
-        if ($part.TrimEnd('\') -ieq $PathToAdd.TrimEnd('\')) {
-            $exists = $true
-            break
+        if ($part.TrimEnd('\\') -ieq $PathToAdd.TrimEnd('\\')) {
+            return
         }
     }
 
-    if (-not $exists) {
-        $newUserPath = if ($userPathParts.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($userPathRaw)) {
-            "$PathToAdd$separator$userPathRaw"
-        }
-        else {
-            $PathToAdd
-        }
-        [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
-        Log "Added to user PATH: $PathToAdd"
+    $newUserPath = if ($userPathParts.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($userPathRaw)) {
+        "$PathToAdd$separator$userPathRaw"
     }
+    else {
+        $PathToAdd
+    }
+
+    [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+    Log "Added to user PATH: $PathToAdd"
 }
 
 function Get-PoetryBinDirs {
@@ -108,22 +131,154 @@ function Resolve-PoetryCommand {
         $candidates += @(
             (Join-Path $dir 'poetry.exe'),
             (Join-Path $dir 'poetry.cmd'),
-            (Join-Path $dir 'poetry.bat'),
-            (Join-Path $dir 'poetry')
+            (Join-Path $dir 'poetry.bat')
         )
     }
 
     foreach ($candidate in ($candidates | Select-Object -Unique)) {
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        if (Is-ExecutableCommandPath $candidate) {
             return $candidate
         }
     }
 
     $poetryCmd = Get-Command -Name poetry -ErrorAction SilentlyContinue
     if ($poetryCmd -and -not [string]::IsNullOrWhiteSpace($poetryCmd.Source)) {
-        $source = $poetryCmd.Source
-        if ([IO.Path]::IsPathRooted($source) -and (Test-Path -LiteralPath $source -PathType Leaf)) {
-            return $source
+        if (Is-ExecutableCommandPath $poetryCmd.Source) {
+            return $poetryCmd.Source
+        }
+    }
+
+    return $null
+}
+
+function Get-PoetryVersion([string]$PoetryCmd) {
+    if ([string]::IsNullOrWhiteSpace($PoetryCmd) -or -not (Test-Path -LiteralPath $PoetryCmd -PathType Leaf)) {
+        return $null
+    }
+
+    $rawOutput = @(& $PoetryCmd --version 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $text = ($rawOutput -join ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    $match = [regex]::Match($text, '(\d+\.\d+\.\d+)')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    try {
+        return [version]$match.Groups[1].Value
+    }
+    catch {
+        return $null
+    }
+}
+
+function Is-PoetryVersionCompatible([version]$Version) {
+    if ($null -eq $Version) {
+        return $false
+    }
+
+    return ($Version -ge $poetryMinVersion -and $Version -lt $poetryMaxExclusiveVersion)
+}
+
+function Uninstall-Poetry([string]$PyLauncherPath, [string]$InstallerScript) {
+    Log 'Uninstalling current Poetry.'
+    $InstallerScript | & $PyLauncherPath - --uninstall | Out-Host
+
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $poetryHome = Join-Path $env:APPDATA 'pypoetry'
+        if (Test-Path -LiteralPath $poetryHome -PathType Container) {
+            Remove-Item -LiteralPath $poetryHome -Recurse -Force
+        }
+    }
+
+    foreach ($dir in (Get-PoetryBinDirs)) {
+        foreach ($name in @('poetry.exe', 'poetry.cmd', 'poetry.bat')) {
+            $candidate = Join-Path $dir $name
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                Remove-Item -LiteralPath $candidate -Force
+            }
+        }
+    }
+}
+
+function Get-PyenvRootFromCommandPath([string]$CommandPath) {
+    if (-not (Is-ExecutableCommandPath $CommandPath)) {
+        return $null
+    }
+
+    $leaf = [IO.Path]::GetFileName($CommandPath).ToLowerInvariant()
+    if ($leaf -notin @('pyenv.bat', 'pyenv.cmd', 'pyenv.exe')) {
+        return $null
+    }
+
+    $binDir = Split-Path -Parent $CommandPath
+    if ([string]::IsNullOrWhiteSpace($binDir)) {
+        return $null
+    }
+
+    if ((Split-Path -Leaf $binDir).ToLowerInvariant() -ne 'bin') {
+        return $null
+    }
+
+    return (Split-Path -Parent $binDir)
+}
+
+function Get-PyenvRootCandidates {
+    $candidates = @()
+    $homeCandidates = @($HOME, $env:USERPROFILE) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    if (-not [string]::IsNullOrWhiteSpace($env:PYENV_ROOT)) {
+        $candidates += $env:PYENV_ROOT
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:PYENV)) {
+        $candidates += $env:PYENV
+    }
+
+    $candidates += $pyenvRoot
+    foreach ($homePath in $homeCandidates) {
+        $candidates += (Join-Path $homePath '.pyenv\pyenv-win')
+        $candidates += (Join-Path $homePath '.pyenv')
+    }
+
+    return @($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+}
+
+function Resolve-PyenvRoot {
+    foreach ($candidate in (Get-PyenvRootCandidates)) {
+        $rootsToCheck = @($candidate)
+        if ((Split-Path -Leaf $candidate).ToLowerInvariant() -ne 'pyenv-win') {
+            $rootsToCheck += (Join-Path $candidate 'pyenv-win')
+        }
+
+        foreach ($root in ($rootsToCheck | Select-Object -Unique)) {
+            $pyenvBat = Join-Path $root 'bin\pyenv.bat'
+            if (Test-Path -LiteralPath $pyenvBat -PathType Leaf) {
+                return $root
+            }
+        }
+    }
+
+    foreach ($candidate in (Get-PyenvRootCandidates)) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
+            continue
+        }
+
+        $match = Get-ChildItem -LiteralPath $candidate -Recurse -Filter pyenv.bat -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '[\\/]bin[\\/]pyenv\.bat$' } |
+            Select-Object -First 1
+
+        if ($match) {
+            $root = Split-Path -Parent (Split-Path -Parent $match.FullName)
+            if (-not [string]::IsNullOrWhiteSpace($root)) {
+                return $root
+            }
         }
     }
 
@@ -131,17 +286,291 @@ function Resolve-PoetryCommand {
 }
 
 function Get-PyenvCommand {
+    $commandCandidates = @()
     $cmd = Get-Command -Name pyenv -ErrorAction SilentlyContinue
     if ($cmd) {
-        return $cmd.Source
+        foreach ($candidate in @($cmd.Path, $cmd.Source, $cmd.Definition)) {
+            if ([string]::IsNullOrWhiteSpace($candidate)) {
+                continue
+            }
+            $commandCandidates += $candidate
+        }
     }
 
-    $bat = Join-Path $pyenvRoot 'bin/pyenv.bat'
-    if (Test-Path -LiteralPath $bat -PathType Leaf) {
-        return $bat
+    $whereMatches = @()
+    try {
+        $whereMatches = @(& cmd.exe /d /c 'where pyenv 2>nul')
+    }
+    catch {
+        $whereMatches = @()
+    }
+
+    foreach ($whereMatch in $whereMatches) {
+        $trimmed = $whereMatch.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+            $commandCandidates += $trimmed
+        }
+    }
+
+    foreach ($candidate in ($commandCandidates | Select-Object -Unique)) {
+        if (Is-ExecutableCommandPath $candidate) {
+            $resolvedRoot = Get-PyenvRootFromCommandPath $candidate
+            if ($resolvedRoot) {
+                $script:pyenvRoot = $resolvedRoot
+            }
+            return $candidate
+        }
+    }
+
+    $resolvedRoot = Resolve-PyenvRoot
+    if ($resolvedRoot) {
+        $script:pyenvRoot = $resolvedRoot
+        foreach ($candidate in @(
+            (Join-Path $script:pyenvRoot 'bin\pyenv.bat'),
+            (Join-Path $script:pyenvRoot 'bin\pyenv.cmd'),
+            (Join-Path $script:pyenvRoot 'bin\pyenv.exe')
+        )) {
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                return $candidate
+            }
+        }
     }
 
     return $null
+}
+
+function Get-PyenvVersion([string]$PyenvCmd) {
+    if ([string]::IsNullOrWhiteSpace($PyenvCmd) -or -not (Test-Path -LiteralPath $PyenvCmd -PathType Leaf)) {
+        return $null
+    }
+
+    $rawOutput = @(& $PyenvCmd --version 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $text = ($rawOutput -join ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    $match = [regex]::Match($text, '(\d+\.\d+\.\d+)')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    try {
+        return [version]$match.Groups[1].Value
+    }
+    catch {
+        return $null
+    }
+}
+
+function Is-PyenvVersionCompatible([version]$Version) {
+    if ($null -eq $Version) {
+        return $false
+    }
+
+    return ($Version -ge $pyenvMinVersion -and $Version -lt $pyenvMaxExclusiveVersion)
+}
+
+function Stop-ProcessesUsingPathPrefix([string]$PathPrefix) {
+    if ([string]::IsNullOrWhiteSpace($PathPrefix)) {
+        return
+    }
+
+    $normalizedPrefix = [IO.Path]::GetFullPath($PathPrefix).TrimEnd('\') + '\'
+    $stopped = 0
+
+    foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)) {
+        $procPath = $null
+        try {
+            $procPath = $proc.Path
+        }
+        catch {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($procPath)) {
+            continue
+        }
+
+        $normalizedProcPath = [IO.Path]::GetFullPath($procPath)
+        if ($normalizedProcPath.StartsWith($normalizedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                $stopped++
+            }
+            catch {
+                # Best effort: process may already have exited or be protected.
+            }
+        }
+    }
+
+    if ($stopped -gt 0) {
+        Log "Stopped $stopped process(es) locking pyenv files."
+    }
+}
+
+function Remove-DirectoryWithRetries([string]$PathValue, [int]$Attempts = 3) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $true
+    }
+
+    for ($i = 1; $i -le $Attempts; $i++) {
+        if (-not (Test-Path -LiteralPath $PathValue -PathType Container)) {
+            return $true
+        }
+
+        try {
+            Remove-Item -LiteralPath $PathValue -Recurse -Force -ErrorAction Stop
+            return $true
+        }
+        catch {
+            if ($i -lt $Attempts) {
+                Start-Sleep -Seconds 1
+            }
+        }
+    }
+
+    return -not (Test-Path -LiteralPath $PathValue -PathType Container)
+}
+
+function Uninstall-Pyenv {
+    $resolvedExistingRoot = Resolve-PyenvRoot
+    if ($resolvedExistingRoot) {
+        $script:pyenvRoot = $resolvedExistingRoot
+    }
+
+    if (-not (Test-Path -LiteralPath $pyenvRoot -PathType Container)) {
+        Log 'pyenv-win is not installed. Nothing to uninstall.'
+        return
+    }
+
+    $installer = Join-Path ([IO.Path]::GetTempPath()) ('install-pyenv-win-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+    $officialError = $null
+    try {
+        Log 'Uninstalling pyenv-win using official uninstall script.'
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1' -OutFile $installer
+        & $installer -UNINSTALL | Out-Host
+        Assert-LastExitCode -Context 'pyenv-win uninstall'
+    }
+    catch {
+        $officialError = $_
+        Log 'Official pyenv-win uninstall did not complete cleanly. Applying local fallback cleanup.'
+    }
+    finally {
+        if (Test-Path -LiteralPath $installer -PathType Leaf) {
+            Remove-Item -LiteralPath $installer -Force
+        }
+    }
+
+    if (Test-Path -LiteralPath $pyenvRoot -PathType Container) {
+        Stop-ProcessesUsingPathPrefix -PathPrefix $pyenvRoot
+        if (-not (Remove-DirectoryWithRetries -PathValue $pyenvRoot -Attempts 3)) {
+            if ($officialError) {
+                Fail "Failed to remove pyenv-win at $pyenvRoot after official uninstall fallback. Last error: $($officialError.Exception.Message)"
+            }
+            Fail "Failed to remove pyenv-win at $pyenvRoot after fallback cleanup."
+        }
+    }
+}
+
+function Install-PyenvWin {
+    $installer = Join-Path ([IO.Path]::GetTempPath()) ('install-pyenv-win-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1' -OutFile $installer -UseBasicParsing
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $installer | Out-Host
+        Assert-LastExitCode -Context 'pyenv-win installer'
+    }
+    finally {
+        if (Test-Path -LiteralPath $installer -PathType Leaf) {
+            Remove-Item -LiteralPath $installer -Force
+        }
+    }
+}
+
+function Ensure-PyenvReady {
+    $resolvedExistingRoot = Resolve-PyenvRoot
+    if ($resolvedExistingRoot) {
+        $script:pyenvRoot = $resolvedExistingRoot
+    }
+
+    if ($Clean) {
+        Log 'Clean mode enabled: uninstalling pyenv-win before reinstall.'
+        Uninstall-Pyenv
+    }
+
+    $pyenvCmd = Get-PyenvCommand
+    if ($pyenvCmd) {
+        Ensure-UserPathContains (Join-Path $pyenvRoot 'bin')
+        Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
+
+        $currentVersion = Get-PyenvVersion -PyenvCmd $pyenvCmd
+        if ($currentVersion -and (Is-PyenvVersionCompatible $currentVersion)) {
+            Log "pyenv detected and compatible: $pyenvCmd (version $currentVersion)"
+            & $pyenvCmd rehash | Out-Host
+            Assert-LastExitCode -Context 'pyenv rehash'
+            return $pyenvCmd
+        }
+
+        if ($null -eq $currentVersion) {
+            Log 'pyenv detected but version could not be determined. Updating pyenv-win.'
+        }
+        else {
+            Log "pyenv version $currentVersion is not compatible (required >=$pyenvMinVersion and <$pyenvMaxExclusiveVersion). Updating pyenv-win."
+        }
+
+        & $pyenvCmd update | Out-Host
+        Assert-LastExitCode -Context 'pyenv update'
+        & $pyenvCmd rehash | Out-Host
+        Assert-LastExitCode -Context 'pyenv rehash'
+
+        $updatedVersion = Get-PyenvVersion -PyenvCmd $pyenvCmd
+        if ($null -eq $updatedVersion) {
+            Fail 'pyenv updated but version could not be determined.'
+        }
+        if (-not (Is-PyenvVersionCompatible $updatedVersion)) {
+            Fail "pyenv version $updatedVersion is not compatible (required >=$pyenvMinVersion and <$pyenvMaxExclusiveVersion)."
+        }
+
+        Log "pyenv updated: $pyenvCmd (version $updatedVersion)"
+        return $pyenvCmd
+    }
+
+    Log 'pyenv not found. Installing pyenv-win.'
+    Install-PyenvWin
+
+    $resolvedInstalledRoot = Resolve-PyenvRoot
+    if ($resolvedInstalledRoot) {
+        if ($resolvedInstalledRoot -ne $script:pyenvRoot) {
+            Log "Detected pyenv root: $resolvedInstalledRoot"
+        }
+        $script:pyenvRoot = $resolvedInstalledRoot
+    }
+
+    Ensure-UserPathContains (Join-Path $pyenvRoot 'bin')
+    Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
+
+    $pyenvCmd = Get-PyenvCommand
+    if (-not $pyenvCmd) {
+        Fail 'pyenv-win installation completed but pyenv command is not available.'
+    }
+
+    & $pyenvCmd rehash | Out-Host
+    Assert-LastExitCode -Context 'pyenv rehash'
+
+    $installedVersion = Get-PyenvVersion -PyenvCmd $pyenvCmd
+    if ($null -eq $installedVersion) {
+        Fail 'pyenv installed but version could not be determined.'
+    }
+    if (-not (Is-PyenvVersionCompatible $installedVersion)) {
+        Fail "pyenv version $installedVersion is not compatible (required >=$pyenvMinVersion and <$pyenvMaxExclusiveVersion)."
+    }
+
+    Log "pyenv installed: $pyenvCmd (version $installedVersion)"
+    return $pyenvCmd
 }
 
 function Get-PyenvInstalledVersions([string]$PyenvCmd) {
@@ -153,43 +582,8 @@ function Get-PyenvInstalledVersions([string]$PyenvCmd) {
             Where-Object { $_ -match '^\d+\.\d+\.\d+$' }
         )
     }
-    return $installed
-}
 
-function Ensure-PyenvGlobal {
-    Ensure-UserPathContains (Join-Path $pyenvRoot 'bin')
-    Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
-
-    $pyenvCmd = Get-PyenvCommand
-    if ($pyenvCmd) {
-        Log "pyenv detected: $pyenvCmd"
-        return $pyenvCmd
-    }
-
-    Log 'pyenv-win not found. Installing globally for current user.'
-
-    $installer = Join-Path ([IO.Path]::GetTempPath()) ('install-pyenv-win-' + [Guid]::NewGuid().ToString('N') + '.ps1')
-    try {
-        Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1' -OutFile $installer -UseBasicParsing
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $installer | Out-Host
-        Assert-LastExitCode -Context 'pyenv-win installer'
-    }
-    finally {
-        if (Test-Path -LiteralPath $installer) {
-            Remove-Item -LiteralPath $installer -Force
-        }
-    }
-
-    Ensure-UserPathContains (Join-Path $pyenvRoot 'bin')
-    Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
-
-    $pyenvCmd = Get-PyenvCommand
-    if (-not $pyenvCmd) {
-        Fail 'pyenv-win installation completed but pyenv command is not available.'
-    }
-
-    Log "pyenv installed: $pyenvCmd"
-    return $pyenvCmd
+    return @($installed | Where-Object { $_ -match '^\d+\.\d+\.\d+$' } | Select-Object -Unique)
 }
 
 function Resolve-LatestPatchVersion([string]$PyenvCmd, [string]$MajorMinor) {
@@ -199,10 +593,11 @@ function Resolve-LatestPatchVersion([string]$PyenvCmd, [string]$MajorMinor) {
     }
     Assert-LastExitCode -Context 'pyenv install list'
 
+    $pattern = "^$([regex]::Escape($MajorMinor))\.\d+$"
     $candidates = @(
         $list |
         ForEach-Object { $_.Trim() } |
-        Where-Object { $_ -match "^$([regex]::Escape($MajorMinor))\.\d+$" }
+        Where-Object { $_ -match $pattern }
     )
 
     if ($candidates.Count -eq 0) {
@@ -226,6 +621,7 @@ function Resolve-PythonFromPyenv([string]$PyenvCmd) {
         (Join-Path $pyenvRoot 'shims/python.bat'),
         (Join-Path $pyenvRoot 'shims/python.cmd')
     )
+
     foreach ($shim in $shimCandidates) {
         if (Test-Path -LiteralPath $shim -PathType Leaf) {
             return $shim
@@ -237,7 +633,6 @@ function Resolve-PythonFromPyenv([string]$PyenvCmd) {
 
 function Ensure-Python313([string]$PyenvCmd) {
     $targetVersion = Resolve-LatestPatchVersion -PyenvCmd $PyenvCmd -MajorMinor $pythonMajorMinor
-
     $installed = Get-PyenvInstalledVersions -PyenvCmd $PyenvCmd
 
     if ($Clean -and ($installed -contains $targetVersion)) {
@@ -245,7 +640,7 @@ function Ensure-Python313([string]$PyenvCmd) {
         & $PyenvCmd uninstall -f $targetVersion | Out-Host
         if ($LASTEXITCODE -ne 0) {
             $versionDir = Join-Path $pyenvRoot "versions/$targetVersion"
-            if (Test-Path -LiteralPath $versionDir) {
+            if (Test-Path -LiteralPath $versionDir -PathType Container) {
                 Remove-Item -LiteralPath $versionDir -Recurse -Force
             }
         }
@@ -276,32 +671,81 @@ function Ensure-Python313([string]$PyenvCmd) {
     return $pythonBin
 }
 
-function Ensure-Poetry([string]$PythonBin) {
-    $poetryCmd = $null
-    if (-not $Clean) {
-        $poetryCmd = Resolve-PoetryCommand
-    }
-
-    if ($poetryCmd -and -not $Clean) {
-        & $poetryCmd --version | Out-Host
-        if ($LASTEXITCODE -eq 0) {
-            Log "Poetry detected: $poetryCmd"
-            return $poetryCmd
-        }
-        Log 'Poetry command exists but failed to execute. Reinstalling Poetry.'
-    }
-
-    if ($Clean -and -not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
-        $poetryHome = Join-Path $env:APPDATA 'pypoetry'
-        if (Test-Path -LiteralPath $poetryHome -PathType Container) {
-            Log "Clean mode enabled: removing Poetry home at $poetryHome"
-            Remove-Item -LiteralPath $poetryHome -Recurse -Force
-        }
+function Ensure-Poetry {
+    $pyLauncher = Get-Command -Name py -ErrorAction SilentlyContinue
+    if (-not $pyLauncher -or [string]::IsNullOrWhiteSpace($pyLauncher.Source)) {
+        Fail "Python launcher 'py' was not found. Poetry install requires: (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -"
     }
 
     $installerScript = (Invoke-WebRequest -Uri 'https://install.python-poetry.org' -UseBasicParsing).Content
     if ([string]::IsNullOrWhiteSpace($installerScript)) {
         Fail 'Poetry installer content is empty.'
+    }
+
+    $pinnedPoetryVersion = $null
+    if (-not [string]::IsNullOrWhiteSpace($poetryVersion)) {
+        try {
+            $pinnedPoetryVersion = [version]$poetryVersion
+        }
+        catch {
+            Fail "POETRY_VERSION '$poetryVersion' is not a valid semantic version."
+        }
+
+        if (-not (Is-PoetryVersionCompatible $pinnedPoetryVersion)) {
+            Fail "POETRY_VERSION '$poetryVersion' is outside supported range >=$poetryMinVersion and <$poetryMaxExclusiveVersion."
+        }
+    }
+
+    $poetryCmd = Resolve-PoetryCommand
+    $shouldInstall = $Clean
+    $needsUninstall = $false
+    $reinstallReason = $null
+
+    if ($poetryCmd) {
+        $currentVersion = Get-PoetryVersion -PoetryCmd $poetryCmd
+        if ($null -eq $currentVersion) {
+            $shouldInstall = $true
+            $needsUninstall = $true
+            $reinstallReason = 'Poetry command exists but failed to report a valid version.'
+        }
+        elseif (-not (Is-PoetryVersionCompatible $currentVersion)) {
+            $shouldInstall = $true
+            $needsUninstall = $true
+            $reinstallReason = "Installed Poetry version $currentVersion is not compatible (required >=$poetryMinVersion and <$poetryMaxExclusiveVersion)."
+        }
+        elseif ($pinnedPoetryVersion -and $currentVersion -ne $pinnedPoetryVersion) {
+            $shouldInstall = $true
+            $needsUninstall = $true
+            $reinstallReason = "Installed Poetry version $currentVersion does not match pinned POETRY_VERSION=$poetryVersion."
+        }
+        elseif (-not $Clean) {
+            Ensure-PoetryPathEntries
+            Log "Poetry detected and compatible: $poetryCmd (version $currentVersion)"
+            return $poetryCmd
+        }
+    }
+    elseif (-not $Clean) {
+        $shouldInstall = $true
+        $reinstallReason = 'Poetry is not installed.'
+    }
+
+    if ($Clean) {
+        $needsUninstall = $true
+        if (-not $reinstallReason) {
+            $reinstallReason = 'Clean mode enabled.'
+        }
+    }
+
+    if ($reinstallReason) {
+        Log $reinstallReason
+    }
+
+    if ($needsUninstall) {
+        Uninstall-Poetry -PyLauncherPath $pyLauncher.Source -InstallerScript $installerScript
+    }
+
+    if (-not $shouldInstall) {
+        Fail 'Poetry installation flow reached an invalid state.'
     }
 
     $hadPoetryVersion = Test-Path Env:POETRY_VERSION
@@ -316,17 +760,9 @@ function Ensure-Poetry([string]$PythonBin) {
             Log "Using POETRY_VERSION=$poetryVersion"
         }
 
-        $pyLauncher = Get-Command -Name py -ErrorAction SilentlyContinue
-        if ($pyLauncher) {
-            Log 'Installing Poetry with official installer: (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -'
-            $installerScript | & $pyLauncher.Source - | Out-Host
-            Assert-LastExitCode -Context 'official Poetry installer (py -)'
-        }
-        else {
-            Log "Python launcher 'py' not found. Installing Poetry with $PythonBin -"
-            $installerScript | & $PythonBin - | Out-Host
-            Assert-LastExitCode -Context 'official Poetry installer (python -)'
-        }
+        Log 'Installing Poetry with official installer: (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -'
+        $installerScript | & $pyLauncher.Source - | Out-Host
+        Assert-LastExitCode -Context 'official Poetry installer (py -)'
     }
     finally {
         if ($hadPoetryVersion) {
@@ -344,10 +780,19 @@ function Ensure-Poetry([string]$PythonBin) {
         Fail 'Poetry installed but command was not found. Verify user PATH includes %APPDATA%\Python\Scripts.'
     }
 
+    $installedVersion = Get-PoetryVersion -PoetryCmd $poetryCmd
+    if ($null -eq $installedVersion) {
+        Fail 'Poetry installed but version could not be determined.'
+    }
+    if (-not (Is-PoetryVersionCompatible $installedVersion)) {
+        Fail "Installed Poetry version $installedVersion is not compatible (required >=$poetryMinVersion and <$poetryMaxExclusiveVersion)."
+    }
+    if ($pinnedPoetryVersion -and $installedVersion -ne $pinnedPoetryVersion) {
+        Fail "Installed Poetry version $installedVersion does not match pinned POETRY_VERSION=$poetryVersion."
+    }
     & $poetryCmd --version | Out-Host
-    Assert-LastExitCode -Context 'poetry --version'
 
-    Log "Poetry installed: $poetryCmd"
+    Log "Poetry installed: $poetryCmd (version $installedVersion)"
     return $poetryCmd
 }
 
@@ -358,14 +803,8 @@ function Ensure-PoetryNonPackageMode {
     }
 
     $content = Get-Content -LiteralPath $pyproject -Raw
-    $originalContent = $content
-
-    # Normalize BOM/ZWNBSP at the beginning. Some Poetry/TOML parser paths fail on it.
     if ($content.Length -gt 0 -and [int][char]$content[0] -eq 0xFEFF) {
         $content = $content.Substring(1)
-    }
-
-    if ($content -ne $originalContent) {
         Write-Utf8NoBom -Path $pyproject -Value $content
         Log 'Removed BOM from pyproject.toml'
     }
@@ -380,13 +819,12 @@ function Ensure-PoetryNonPackageMode {
             '(?m)^\[tool\.poetry\]\s*$',
             "[tool.poetry]`npackage-mode = false"
         )
-        Write-Utf8NoBom -Path $pyproject -Value $updated
     }
     else {
         $updated = $content.TrimEnd() + "`n`n[tool.poetry]`npackage-mode = false`n"
-        Write-Utf8NoBom -Path $pyproject -Value $updated
     }
 
+    Write-Utf8NoBom -Path $pyproject -Value $updated
     Log 'Configured Poetry with package-mode = false in pyproject.toml'
 }
 
@@ -398,62 +836,46 @@ function Configure-LocalVenv([string]$PoetryBin, [string]$PythonBin) {
         Remove-Item -LiteralPath $desiredVenv -Recurse -Force
     }
 
-    if ($venvDir -ne '.venv') {
+    if ($venvDir -eq '.venv') {
+        if ((Test-Path -LiteralPath $desiredVenv) -and -not (Test-Path -LiteralPath $desiredVenv -PathType Container)) {
+            Remove-Item -LiteralPath $desiredVenv -Recurse -Force
+        }
+        if (-not (Test-Path -LiteralPath $desiredVenv -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $desiredVenv | Out-Null
+        }
+    }
+    else {
         New-Item -ItemType Directory -Force -Path $desiredVenv | Out-Null
 
         $dotVenv = Join-Path $scriptDir '.venv'
         if (Test-Path -LiteralPath $dotVenv) {
-            Remove-Item -LiteralPath $dotVenv -Force -Recurse
+            Remove-Item -LiteralPath $dotVenv -Recurse -Force
         }
         New-Item -ItemType SymbolicLink -Path $dotVenv -Target $desiredVenv | Out-Null
         Log "Linked .venv -> $desiredVenv"
     }
 
     $env:POETRY_VIRTUALENVS_IN_PROJECT = 'true'
-    Log 'Configuring Poetry: virtualenvs.prefer-active-python = true'
-    $preferActiveConfigured = $false
+    & $PoetryBin config virtualenvs.in-project true --local | Out-Host
 
-    & $PoetryBin config virtualenvs.prefer-active-python true | Out-Host
-    if ($LASTEXITCODE -eq 0) {
-        $preferActiveConfigured = $true
-    }
-    else {
-        Log 'Primary attempt failed. Retrying with: poetry config virtualenvs.prefer-active-python true'
-        & poetry config virtualenvs.prefer-active-python true | Out-Host
-        if ($LASTEXITCODE -eq 0) {
-            $preferActiveConfigured = $true
-        } else {
-            Log 'Second attempt failed. Retrying with: poetry config virtualenvs.use-poetry-python false'
-            & poetry config virtualenvs.use-poetry-python false | Out-Host      
-            if ($LASTEXITCODE -eq 0) {
-                $preferActiveConfigured = $true
-            }  
-        }
-    }
-
-
-    if (-not $preferActiveConfigured) {
-        Fail "Failed to apply: poetry config virtualenvs.prefer-active-python true"
-    }
-
-    Log "Configuring local virtualenv at $desiredVenv"
-    & $PoetryBin env use $PythonBin
+    Log "Configuring Poetry local virtualenv at $desiredVenv"
+    & $PoetryBin env use $PythonBin | Out-Host
     Assert-LastExitCode -Context 'poetry env use'
 }
 
 function Main {
     if ($Clean) {
-        Log 'Clean mode enabled: forcing clean reinstall of Python 3.13, Poetry, and local .venv'
+        Log 'Clean mode enabled: uninstalling pyenv and poetry, then reinstalling Python 3.13, Poetry, and local .venv.'
     }
 
-    $pyenvCmd = Ensure-PyenvGlobal
+    $pyenvCmd = Ensure-PyenvReady
     $pythonBin = Ensure-Python313 -PyenvCmd $pyenvCmd
-    $poetryBin = Ensure-Poetry -PythonBin $pythonBin
+    $poetryBin = Ensure-Poetry
 
     Ensure-PoetryNonPackageMode
     Configure-LocalVenv -PoetryBin $poetryBin -PythonBin $pythonBin
 
-    Log 'Installing project dependencies into local .venv'
+    Log 'Installing project dependencies from pyproject.toml with Poetry'
     & $poetryBin install --no-root --only main --no-interaction | Out-Host
     Assert-LastExitCode -Context 'poetry install'
 
