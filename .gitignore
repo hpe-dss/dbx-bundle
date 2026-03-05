@@ -1,8 +1,8 @@
 dabs/
 .pytest_cache/
 .venv/
-poetry.lock
 scripts/__pycache__/
 tests/__pycache__/
+dist/
 .git-work
 .git-personal

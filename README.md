@@ -2,7 +2,45 @@
 
 ## Installation
 
-### Windows (PowerShell)
+### One-command install (without cloning this repo)
+
+Version pinned to `v1.0.0`:
+
+Linux / macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.sh | bash
+```
+
+Windows (PowerShell):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.ps1)))
+```
+
+Optional Databricks CLI version:
+
+Linux / macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.sh | bash -s -- 0.291.0
+```
+
+Windows (PowerShell):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.ps1))) -DatabricksCliVersion 0.291.0
+```
+
+Optional installer environment variables:
+- `DBX_RELEASE_VERSION` (default: `v1.0.0`)
+- `DBX_REPO` (default: `hpe-dss/dbx-bundle`)
+
+`install-remote.sh` / `install-remote.ps1` download release artifacts and verify SHA-256 checksums before running the installer.
+
+### Local install from repository checkout
+
+#### Windows (PowerShell)
 
 Install or update everything:
 
@@ -32,7 +70,7 @@ If needed, load profile manually:
 . $PROFILE
 ```
 
-### Linux / macOS (bash)
+#### Linux / macOS (bash)
 
 Install or update everything:
 
@@ -122,6 +160,11 @@ Remove-Item Env:POETRY_VERSION -ErrorAction SilentlyContinue
 
 ## What install scripts do
 
+`install-remote.sh` / `install-remote.ps1`:
+- Download a tagged release package from GitHub (default tag `v1.0.0`).
+- Verify package integrity against `SHA256SUMS`.
+- Execute local `install.sh` / `install.ps1` from the downloaded package.
+
 `install.sh` / `install.ps1` do the following:
 - Copies the project scripts to `~/scripts/dbx/`.
 - Runs `set_databricks_cli.sh` / `set_databricks_cli.ps1` to install or update Databricks CLI.
@@ -154,6 +197,24 @@ Wrapper options and env vars:
 - `-t|--target <target>`: required for wrapper bundle operations.
 - `BUNDLE_ROOT`: bundle root directory (default: current directory `.`).
 - `BUNDLE_FILE`: bundle config path (default: `<BUNDLE_ROOT>/databricks.yml`).
+
+## Release process
+
+Release automation is configured in `.github/workflows/release.yml`.
+
+When a tag like `v1.0.0` is pushed, the workflow publishes:
+- `dbx-v1.0.0.tar.gz`
+- `dbx-v1.0.0.zip`
+- `SHA256SUMS`
+
+Commands to publish `v1.0.0`:
+
+```bash
+git add .
+git commit -m "prepare release v1.0.0"
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ### YAML preprocessing directives
 
