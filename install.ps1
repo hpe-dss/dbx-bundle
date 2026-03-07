@@ -87,7 +87,10 @@ if (-not (Test-Path -LiteralPath $profileFile)) {
     New-Item -ItemType File -Path $profileFile -Force | Out-Null
 }
 
-$profileContent = Get-Content -LiteralPath $profileFile -Raw
+$profileContent = Get-Content -LiteralPath $profileFile -Raw -ErrorAction SilentlyContinue
+if ($null -eq $profileContent) {
+    $profileContent = ''
+}
 $pattern = '(?ms)^' + [regex]::Escape($profileBlockStart) + '.*?^' + [regex]::Escape($profileBlockEnd) + '\s*'
 $profileContent = [regex]::Replace($profileContent, $pattern, '')
 

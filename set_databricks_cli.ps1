@@ -138,7 +138,10 @@ function Persist-PathInProfile([string]$PathToAdd) {
         New-Item -ItemType File -Force -Path $profileFile | Out-Null
     }
 
-    $content = Get-Content -LiteralPath $profileFile -Raw
+    $content = Get-Content -LiteralPath $profileFile -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $content) {
+        $content = ''
+    }
     $pattern = '(?ms)^' + [regex]::Escape($profileBlockStart) + '.*?^' + [regex]::Escape($profileBlockEnd) + '\s*'
     $content = [regex]::Replace($content, $pattern, '')
 
