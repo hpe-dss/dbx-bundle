@@ -375,6 +375,89 @@ function Is-PyenvVersionCompatible([version]$Version) {
     return ($Version -ge $pyenvMinVersion -and $Version -lt $pyenvMaxExclusiveVersion)
 }
 
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-VBScriptAvailable {
+    $cscriptPath = Join-Path $env:windir 'System32\cscript.exe'
+    $vbscriptDll = Join-Path $env:windir 'System32\vbscript.dll'
+    if (-not (Test-Path -LiteralPath $cscriptPath -PathType Leaf)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $vbscriptDll -PathType Leaf)) {
+        return $false
+    }
+
+    $machineEnabled = Get-ItemPropertyValue -Path 'HKLM:\Software\Microsoft\Windows Script Host\Settings' -Name Enabled -ErrorAction SilentlyContinue
+    if ($machineEnabled -eq 0) {
+        return $false
+    }
+
+    $userEnabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows Script Host\Settings' -Name Enabled -ErrorAction SilentlyContinue
+    if ($userEnabled -eq 0) {
+        return $false
+    }
+
+    $probeScript = Join-Path ([IO.Path]::GetTempPath()) ('vbscript-probe-' + [Guid]::NewGuid().ToString('N') + '.vbs')
+    try {
+        Set-Content -LiteralPath $probeScript -Value 'WScript.Quit 0' -Encoding ASCII
+        & $cscriptPath //nologo $probeScript *> $null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if (Test-Path -LiteralPath $probeScript -PathType Leaf) {
+            Remove-Item -LiteralPath $probeScript -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Ensure-VBScriptReady {
+    if (Test-VBScriptAvailable) {
+        Log 'VBScript is available.'
+        return
+    }
+
+    Log 'VBScript is not available. Installing/enabling required components.'
+    if (-not (Test-IsAdministrator)) {
+        Fail 'VBScript remediation requires administrator privileges. Run this script in an elevated PowerShell session.'
+    }
+
+    & dism.exe /Online /Add-Capability /CapabilityName:VBSCRIPT~~~~ /NoRestart /Quiet > $null 2>&1
+    Assert-LastExitCode -Context 'Install VBScript capability'
+
+    & "$env:windir\System32\regsvr32.exe" /s "$env:windir\System32\vbscript.dll"
+    Assert-LastExitCode -Context 'Register System32 vbscript.dll'
+
+    if (Test-Path -LiteralPath "$env:windir\SysWOW64\vbscript.dll" -PathType Leaf) {
+        & "$env:windir\SysWOW64\regsvr32.exe" /s "$env:windir\SysWOW64\vbscript.dll"
+        Assert-LastExitCode -Context 'Register SysWOW64 vbscript.dll'
+    }
+
+    & cmd.exe /d /c 'assoc .vbs=VBSFile' > $null 2>&1
+    Assert-LastExitCode -Context 'Associate .vbs extension'
+
+    & cmd.exe /d /c 'ftype VBSFile="%SystemRoot%\System32\WScript.exe" "%1" %*' > $null 2>&1
+    Assert-LastExitCode -Context 'Configure VBSFile file type'
+
+    & reg.exe add 'HKLM\Software\Microsoft\Windows Script Host\Settings' /v Enabled /t REG_DWORD /d 1 /f > $null 2>&1
+    Assert-LastExitCode -Context 'Enable WSH in HKLM'
+
+    & reg.exe add 'HKCU\Software\Microsoft\Windows Script Host\Settings' /v Enabled /t REG_DWORD /d 1 /f > $null 2>&1
+    Assert-LastExitCode -Context 'Enable WSH in HKCU'
+
+    if (-not (Test-VBScriptAvailable)) {
+        Fail 'VBScript is still unavailable after remediation.'
+    }
+
+    Log 'VBScript is ready.'
+}
+
 function Stop-ProcessesUsingPathPrefix([string]$PathPrefix) {
     if ([string]::IsNullOrWhiteSpace($PathPrefix)) {
         return
@@ -506,6 +589,7 @@ function Ensure-PyenvReady {
     if ($pyenvCmd) {
         Ensure-UserPathContains (Join-Path $pyenvRoot 'bin')
         Ensure-UserPathContains (Join-Path $pyenvRoot 'shims')
+        Ensure-VBScriptReady
 
         $currentVersion = Get-PyenvVersion -PyenvCmd $pyenvCmd
         if ($currentVersion -and (Is-PyenvVersionCompatible $currentVersion)) {
@@ -540,6 +624,7 @@ function Ensure-PyenvReady {
     }
 
     Log 'pyenv not found. Installing pyenv-win.'
+    Ensure-VBScriptReady
     Install-PyenvWin
 
     $resolvedInstalledRoot = Resolve-PyenvRoot
