@@ -381,6 +381,18 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-RegistryValueOrNull([string]$Path, [string]$Name) {
+    try {
+        return Get-ItemPropertyValue -Path $Path -Name $Name -ErrorAction Stop
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        return $null
+    }
+    catch [System.Management.Automation.PSArgumentException] {
+        return $null
+    }
+}
+
 function Test-VBScriptAvailable {
     $cscriptPath = Join-Path $env:windir 'System32\cscript.exe'
     $vbscriptDll = Join-Path $env:windir 'System32\vbscript.dll'
@@ -391,12 +403,12 @@ function Test-VBScriptAvailable {
         return $false
     }
 
-    $machineEnabled = Get-ItemPropertyValue -Path 'HKLM:\Software\Microsoft\Windows Script Host\Settings' -Name Enabled -ErrorAction SilentlyContinue
+    $machineEnabled = Get-RegistryValueOrNull -Path 'HKLM:\Software\Microsoft\Windows Script Host\Settings' -Name Enabled
     if ($machineEnabled -eq 0) {
         return $false
     }
 
-    $userEnabled = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows Script Host\Settings' -Name Enabled -ErrorAction SilentlyContinue
+    $userEnabled = Get-RegistryValueOrNull -Path 'HKCU:\Software\Microsoft\Windows Script Host\Settings' -Name Enabled
     if ($userEnabled -eq 0) {
         return $false
     }
