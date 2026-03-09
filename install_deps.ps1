@@ -532,6 +532,37 @@ function Remove-DirectoryWithRetries([string]$PathValue, [int]$Attempts = 3) {
     return -not (Test-Path -LiteralPath $PathValue -PathType Container)
 }
 
+function Test-BrokenPyenvLayout([string]$RootPath) {
+    if ([string]::IsNullOrWhiteSpace($RootPath)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
+        return $false
+    }
+
+    $expectedCmd = Join-Path $RootPath 'pyenv-win\bin\pyenv.bat'
+    if (Test-Path -LiteralPath $expectedCmd -PathType Leaf) {
+        return $false
+    }
+
+    $versionFile = Join-Path $RootPath '.version'
+    $readmeFile = Join-Path $RootPath 'README.md'
+    if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $readmeFile -PathType Leaf)) {
+        return $false
+    }
+
+    try {
+        $readmeHead = Get-Content -LiteralPath $readmeFile -TotalCount 5 -ErrorAction Stop
+        return (($readmeHead -join "`n") -match 'pyenv for Windows')
+    }
+    catch {
+        return $false
+    }
+}
+
 function Uninstall-Pyenv {
     $resolvedExistingRoot = Resolve-PyenvRoot
     if ($resolvedExistingRoot) {
@@ -539,6 +570,15 @@ function Uninstall-Pyenv {
     }
 
     if (-not (Test-Path -LiteralPath $pyenvRoot -PathType Container)) {
+        $legacyRoot = Join-Path $HOME '.pyenv'
+        if (Test-BrokenPyenvLayout -RootPath $legacyRoot) {
+            Log "Detected broken pyenv-win layout at $legacyRoot. Removing it."
+            Stop-ProcessesUsingPathPrefix -PathPrefix $legacyRoot
+            if (-not (Remove-DirectoryWithRetries -PathValue $legacyRoot -Attempts 3)) {
+                Fail "Failed to remove broken pyenv root at $legacyRoot."
+            }
+            return
+        }
         Log 'pyenv-win is not installed. Nothing to uninstall.'
         return
     }
@@ -636,6 +676,14 @@ function Ensure-PyenvReady {
     }
 
     Log 'pyenv not found. Installing pyenv-win.'
+    $legacyRoot = Join-Path $HOME '.pyenv'
+    if (Test-BrokenPyenvLayout -RootPath $legacyRoot) {
+        Log "Detected broken pyenv-win layout at $legacyRoot. Removing it before reinstall."
+        Stop-ProcessesUsingPathPrefix -PathPrefix $legacyRoot
+        if (-not (Remove-DirectoryWithRetries -PathValue $legacyRoot -Attempts 3)) {
+            Fail "Failed to remove broken pyenv root at $legacyRoot."
+        }
+    }
     Ensure-VBScriptReady
     Install-PyenvWin
 
@@ -768,10 +816,19 @@ function Ensure-Python313([string]$PyenvCmd) {
     return $pythonBin
 }
 
-function Ensure-Poetry {
+function Ensure-Poetry([string]$PythonBin) {
     $pyLauncher = Get-Command -Name py -ErrorAction SilentlyContinue
-    if (-not $pyLauncher -or [string]::IsNullOrWhiteSpace($pyLauncher.Source)) {
-        Fail "Python launcher 'py' was not found. Poetry install requires: (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -"
+
+    $installRunners = @()
+    if (-not [string]::IsNullOrWhiteSpace($PythonBin) -and (Test-Path -LiteralPath $PythonBin -PathType Leaf)) {
+        $installRunners += $PythonBin
+    }
+    if ($pyLauncher -and -not [string]::IsNullOrWhiteSpace($pyLauncher.Source)) {
+        $installRunners += $pyLauncher.Source
+    }
+    $installRunners = @($installRunners | Select-Object -Unique)
+    if ($installRunners.Count -eq 0) {
+        Fail "No Python runner found for Poetry install. Expected pyenv Python or Python launcher 'py'."
     }
 
     $installerScript = (Invoke-WebRequest -Uri 'https://install.python-poetry.org' -UseBasicParsing).Content
@@ -838,7 +895,7 @@ function Ensure-Poetry {
     }
 
     if ($needsUninstall) {
-        Uninstall-Poetry -PyLauncherPath $pyLauncher.Source -InstallerScript $installerScript
+        Uninstall-Poetry -PyLauncherPath $installRunners[0] -InstallerScript $installerScript
     }
 
     if (-not $shouldInstall) {
@@ -857,9 +914,28 @@ function Ensure-Poetry {
             Log "Using POETRY_VERSION=$poetryVersion"
         }
 
-        Log 'Installing Poetry with official installer: (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -'
-        $installerScript | & $pyLauncher.Source - | Out-Host
-        Assert-LastExitCode -Context 'official Poetry installer (py -)'
+        $installError = $null
+        $installed = $false
+        foreach ($runner in $installRunners) {
+            try {
+                Log "Installing Poetry with official installer using: $runner -"
+                $installerScript | & $runner - | Out-Host
+                Assert-LastExitCode -Context "official Poetry installer ($runner -)"
+                $installed = $true
+                break
+            }
+            catch {
+                $installError = $_
+                Log "Poetry installer attempt failed with $runner. Trying next available Python runner if any."
+            }
+        }
+
+        if (-not $installed) {
+            if ($installError) {
+                throw $installError
+            }
+            Fail 'official Poetry installer failed.'
+        }
     }
     finally {
         if ($hadPoetryVersion) {
@@ -967,7 +1043,7 @@ function Main {
 
     $pyenvCmd = Ensure-PyenvReady
     $pythonBin = Ensure-Python313 -PyenvCmd $pyenvCmd
-    $poetryBin = Ensure-Poetry
+    $poetryBin = Ensure-Poetry -PythonBin $pythonBin
 
     Ensure-PoetryNonPackageMode
     Configure-LocalVenv -PoetryBin $poetryBin -PythonBin $pythonBin
