@@ -57,7 +57,6 @@ $filesToCopy = @(
     @{ Source = 'install_deps.ps1'; Destination = (Join-Path $InstallDir 'install_deps.ps1') }
     @{ Source = 'pyproject.toml'; Destination = (Join-Path $InstallDir 'pyproject.toml') }
     @{ Source = 'README.md'; Destination = (Join-Path $InstallDir 'README.md') }
-    @{ Source = 'INSTALL.md'; Destination = (Join-Path $InstallDir 'INSTALL.md') }
     @{ Source = 'scripts/yaml_comments_preprocessor.py'; Destination = (Join-Path $targetScriptsDir 'yaml_comments_preprocessor.py') }
     @{ Source = 'scripts/sql_param_interpolator.py'; Destination = (Join-Path $targetScriptsDir 'sql_param_interpolator.py') }
 )

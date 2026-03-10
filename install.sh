@@ -44,7 +44,6 @@ copy_file "${SCRIPT_DIR}/set_databricks_cli.sh" "${INSTALL_DIR}/set_databricks_c
 copy_file "${SCRIPT_DIR}/install_deps.sh" "${INSTALL_DIR}/install_deps.sh"
 copy_file "${SCRIPT_DIR}/pyproject.toml" "${INSTALL_DIR}/pyproject.toml"
 copy_file "${SCRIPT_DIR}/README.md" "${INSTALL_DIR}/README.md"
-copy_file "${SCRIPT_DIR}/INSTALL.md" "${INSTALL_DIR}/INSTALL.md"
 copy_file "${SCRIPT_DIR}/scripts/yaml_comments_preprocessor.py" "${TARGET_SCRIPTS_DIR}/yaml_comments_preprocessor.py"
 copy_file "${SCRIPT_DIR}/scripts/sql_param_interpolator.py" "${TARGET_SCRIPTS_DIR}/sql_param_interpolator.py"
 
