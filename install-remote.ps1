@@ -4,6 +4,7 @@ param(
     [string]$DatabricksCliVersion,
     [string]$DbxReleaseVersion = $(if ($env:DBX_RELEASE_VERSION) { $env:DBX_RELEASE_VERSION } else { 'v1.0.1' }),
     [string]$DbxRepo = $(if ($env:DBX_REPO) { $env:DBX_REPO } else { 'hpe-dss/dbx-bundle' }),
+    [switch]$UsePyenv,
     [switch]$Clean
 )
 
@@ -72,6 +73,9 @@ try {
     $installParams = @{}
     if (-not [string]::IsNullOrWhiteSpace($DatabricksCliVersion)) {
         $installParams['DatabricksCliVersion'] = $DatabricksCliVersion
+    }
+    if ($UsePyenv) {
+        $installParams['UsePyenv'] = $true
     }
     if ($Clean) {
         $installParams['Clean'] = $true

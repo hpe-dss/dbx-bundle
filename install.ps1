@@ -4,6 +4,7 @@ param(
     [string]$DatabricksCliVersion,
     [string]$InstallDir = $(if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $HOME 'scripts/dbx' }),
     [string]$PythonVersion = $(if ($env:PYTHON_VERSION) { $env:PYTHON_VERSION } else { '3' }),
+    [switch]$UsePyenv,
     [switch]$Clean
 )
 
@@ -56,6 +57,7 @@ $filesToCopy = @(
     @{ Source = 'install_deps.ps1'; Destination = (Join-Path $InstallDir 'install_deps.ps1') }
     @{ Source = 'pyproject.toml'; Destination = (Join-Path $InstallDir 'pyproject.toml') }
     @{ Source = 'README.md'; Destination = (Join-Path $InstallDir 'README.md') }
+    @{ Source = 'Install.md'; Destination = (Join-Path $InstallDir 'Install.md') }
     @{ Source = 'scripts/yaml_comments_preprocessor.py'; Destination = (Join-Path $targetScriptsDir 'yaml_comments_preprocessor.py') }
     @{ Source = 'scripts/sql_param_interpolator.py'; Destination = (Join-Path $targetScriptsDir 'sql_param_interpolator.py') }
 )
@@ -66,14 +68,16 @@ foreach ($file in $filesToCopy) {
 
 Push-Location $InstallDir
 try {
+    $pythonMode = if ($UsePyenv) { 'pyenv' } else { 'direct' }
+
     if ($Clean) {
-        Write-Host '==> Clean mode enabled: forcing clean reinstall of CLI + Python + Poetry + .venv'
+        Write-Host "==> Clean mode enabled: forcing clean reinstall of CLI + Python + Poetry + .venv (Windows Python mode: $pythonMode)"
     }
 
     Invoke-LocalScript -ScriptPath (Join-Path $InstallDir 'set_databricks_cli.ps1') -FirstArg $DatabricksCliVersion -CleanMode:$Clean
 
     $env:PYTHON_VERSION = $PythonVersion
-    & (Join-Path $InstallDir 'install_deps.ps1') -Clean:$Clean
+    & (Join-Path $InstallDir 'install_deps.ps1') -Clean:$Clean -UsePyenv:$UsePyenv
 }
 finally {
     Pop-Location

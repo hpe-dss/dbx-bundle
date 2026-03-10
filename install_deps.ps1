@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$Clean
+    [switch]$Clean,
+    [switch]$UsePyenv
 )
 
 Set-StrictMode -Version Latest
@@ -15,7 +16,10 @@ Set-Location $scriptDir
 
 $venvDir = if ($env:VENV_DIR) { $env:VENV_DIR } else { '.venv' }
 $poetryVersion = if ($env:POETRY_VERSION) { $env:POETRY_VERSION } else { '' }
+$pythonInstallMode = if ($UsePyenv) { 'pyenv' } else { 'direct' }
+
 $pythonMajorMinor = '3.13'
+$pythonWingetPackageId = 'Python.Python.3.13'
 $pyenvRoot = Join-Path $HOME '.pyenv\pyenv-win'
 $pyenvMinVersion = [version]'3.1.0'
 $pyenvMaxExclusiveVersion = [version]'4.0.0'
@@ -718,6 +722,214 @@ function Ensure-PyenvReady {
     return $pyenvCmd
 }
 
+function Get-PythonVersionFromInvocation([string]$CommandPath, [string[]]$InvocationArgs) {
+    if ([string]::IsNullOrWhiteSpace($CommandPath)) {
+        return $null
+    }
+
+    try {
+        $rawOutput = @(& $CommandPath @InvocationArgs 2>&1)
+    }
+    catch {
+        return $null
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $text = ($rawOutput -join ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    $match = [regex]::Match($text, 'Python\s+(\d+\.\d+\.\d+)')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    try {
+        return [version]$match.Groups[1].Value
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-MajorMinorMatch([version]$Version, [string]$MajorMinor) {
+    if ($null -eq $Version -or [string]::IsNullOrWhiteSpace($MajorMinor)) {
+        return $false
+    }
+
+    $parts = $MajorMinor.Split('.', 2)
+    if ($parts.Count -ne 2) {
+        return $false
+    }
+
+    $major = 0
+    $minor = 0
+    if (-not [int]::TryParse($parts[0], [ref]$major)) {
+        return $false
+    }
+    if (-not [int]::TryParse($parts[1], [ref]$minor)) {
+        return $false
+    }
+
+    return ($Version.Major -eq $major -and $Version.Minor -eq $minor)
+}
+
+function Test-IsPyenvPath([string]$PathValue) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $false
+    }
+
+    try {
+        $candidateFullPath = [IO.Path]::GetFullPath($PathValue).TrimEnd('\').ToLowerInvariant()
+        $pyenvRootFullPath = [IO.Path]::GetFullPath($pyenvRoot).TrimEnd('\').ToLowerInvariant()
+        return ($candidateFullPath -eq $pyenvRootFullPath -or $candidateFullPath.StartsWith("$pyenvRootFullPath\"))
+    }
+    catch {
+        return $false
+    }
+}
+
+function Resolve-PythonFromPyLauncher([string]$MajorMinor) {
+    $selector = "-$MajorMinor"
+    $pyLauncher = Get-Command -Name py -ErrorAction SilentlyContinue
+    if (-not $pyLauncher -or [string]::IsNullOrWhiteSpace($pyLauncher.Source)) {
+        return $null
+    }
+
+    $pyLauncherPath = $pyLauncher.Source
+    $version = Get-PythonVersionFromInvocation -CommandPath $pyLauncherPath -InvocationArgs @($selector, '--version')
+    if (-not (Test-MajorMinorMatch -Version $version -MajorMinor $MajorMinor)) {
+        return $null
+    }
+
+    $pythonPathOutput = @(& $pyLauncherPath $selector -c 'import sys; print(sys.executable)' 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $pythonPath = ($pythonPathOutput -join "`n").Trim()
+    if ([string]::IsNullOrWhiteSpace($pythonPath)) {
+        return $null
+    }
+    if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
+        return $null
+    }
+    if (Test-IsPyenvPath -PathValue $pythonPath) {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Path    = $pythonPath
+        Version = $version
+        Source  = 'py launcher'
+    }
+}
+
+function Resolve-PythonFromCommandName([string]$CommandName, [string]$MajorMinor) {
+    if ([string]::IsNullOrWhiteSpace($CommandName)) {
+        return $null
+    }
+
+    $cmd = Get-Command -Name $CommandName -ErrorAction SilentlyContinue
+    if (-not $cmd -or [string]::IsNullOrWhiteSpace($cmd.Source)) {
+        return $null
+    }
+
+    $candidatePath = $cmd.Source
+    if (-not (Is-ExecutableCommandPath $candidatePath)) {
+        return $null
+    }
+    if (Test-IsPyenvPath -PathValue $candidatePath) {
+        return $null
+    }
+
+    $version = Get-PythonVersionFromInvocation -CommandPath $candidatePath -InvocationArgs @('--version')
+    if (-not (Test-MajorMinorMatch -Version $version -MajorMinor $MajorMinor)) {
+        return $null
+    }
+
+    return [PSCustomObject]@{
+        Path    = $candidatePath
+        Version = $version
+        Source  = $CommandName
+    }
+}
+
+function Get-DirectPython313Candidate {
+    $candidate = Resolve-PythonFromPyLauncher -MajorMinor $pythonMajorMinor
+    if ($candidate) {
+        return $candidate
+    }
+
+    foreach ($name in @('python', 'python3')) {
+        $candidate = Resolve-PythonFromCommandName -CommandName $name -MajorMinor $pythonMajorMinor
+        if ($candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Install-Python313Direct {
+    $winget = Get-Command -Name winget -ErrorAction SilentlyContinue
+    if (-not $winget -or [string]::IsNullOrWhiteSpace($winget.Source)) {
+        Fail "Python $pythonMajorMinor was not found and winget is not available. Install Python $pythonMajorMinor.x manually from https://www.python.org/downloads/windows/ and retry."
+    }
+
+    $wingetArgs = @(
+        'install',
+        '--id', $pythonWingetPackageId,
+        '--exact',
+        '--source', 'winget',
+        '--accept-package-agreements',
+        '--accept-source-agreements',
+        '--silent',
+        '--disable-interactivity'
+    )
+
+    if ($Clean) {
+        $wingetArgs += '--force'
+    }
+
+    Log "Installing Python $pythonMajorMinor.x using winget package $pythonWingetPackageId"
+    $wingetOutput = @(& $winget.Source @wingetArgs 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        if ($wingetOutput.Count -gt 0) {
+            $wingetOutput | Out-Host
+        }
+        Fail "winget install $pythonWingetPackageId failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Ensure-Python313Direct {
+    $candidate = Get-DirectPython313Candidate
+    if ($candidate -and -not $Clean) {
+        Log "Using Python interpreter: $($candidate.Path) (Python $($candidate.Version), source: $($candidate.Source))"
+        return $candidate.Path
+    }
+
+    if ($candidate -and $Clean) {
+        Log "Clean mode enabled: reinstalling Python $pythonMajorMinor.x via winget."
+    }
+    elseif (-not $candidate) {
+        Log "Python $pythonMajorMinor.x not found. Installing with winget."
+    }
+
+    Install-Python313Direct
+    $candidate = Get-DirectPython313Candidate
+    if (-not $candidate) {
+        Fail "Python $pythonMajorMinor.x installation completed but the interpreter could not be resolved. Restart PowerShell and run install again."
+    }
+
+    Log "Using Python interpreter: $($candidate.Path) (Python $($candidate.Version), source: $($candidate.Source))"
+    return $candidate.Path
+}
+
 function Get-PyenvInstalledVersions([string]$PyenvCmd) {
     $installed = @(& $PyenvCmd versions --bare 2>$null | ForEach-Object { $_.Trim() })
     if ($LASTEXITCODE -ne 0) {
@@ -828,7 +1040,7 @@ function Ensure-Poetry([string]$PythonBin) {
     }
     $installRunners = @($installRunners | Select-Object -Unique)
     if ($installRunners.Count -eq 0) {
-        Fail "No Python runner found for Poetry install. Expected pyenv Python or Python launcher 'py'."
+        Fail "No Python runner found for Poetry install. Expected configured Python interpreter or Python launcher 'py'."
     }
 
     $installerScript = (Invoke-WebRequest -Uri 'https://install.python-poetry.org' -UseBasicParsing).Content
@@ -1036,21 +1248,37 @@ function Configure-LocalVenv([string]$PoetryBin, [string]$PythonBin) {
     Assert-LastExitCode -Context 'poetry env use'
 }
 
+function Install-ProjectDependencies([string]$PoetryBin) {
+    Log 'Installing project dependencies from pyproject.toml with Poetry'
+    & $PoetryBin install --no-root --only main --no-interaction | Out-Host
+    Assert-LastExitCode -Context 'poetry install'
+}
+
 function Main {
     if ($Clean) {
-        Log 'Clean mode enabled: uninstalling pyenv and poetry, then reinstalling Python 3.13, Poetry, and local .venv.'
+        if ($pythonInstallMode -eq 'pyenv') {
+            Log 'Clean mode enabled: uninstalling pyenv and poetry, then reinstalling Python 3.13, Poetry, and local .venv.'
+        }
+        else {
+            Log 'Clean mode enabled: reinstalling Python 3.13, Poetry, and local .venv without pyenv.'
+        }
     }
 
-    $pyenvCmd = Ensure-PyenvReady
-    $pythonBin = Ensure-Python313 -PyenvCmd $pyenvCmd
+    if ($pythonInstallMode -eq 'pyenv') {
+        $pyenvCmd = Ensure-PyenvReady
+        $pythonBin = Ensure-Python313 -PyenvCmd $pyenvCmd
+    }
+    else {
+        Log 'Python install mode: direct (no pyenv).'
+        $pythonBin = Ensure-Python313Direct
+    }
+
     $poetryBin = Ensure-Poetry -PythonBin $pythonBin
 
     Ensure-PoetryNonPackageMode
     Configure-LocalVenv -PoetryBin $poetryBin -PythonBin $pythonBin
 
-    Log 'Installing project dependencies from pyproject.toml with Poetry'
-    & $poetryBin install --no-root --only main --no-interaction | Out-Host
-    Assert-LastExitCode -Context 'poetry install'
+    Install-ProjectDependencies -PoetryBin $poetryBin
 
     Log 'Setup complete'
     $interpolatorPath = Join-Path $scriptDir 'scripts/sql_param_interpolator.py'
