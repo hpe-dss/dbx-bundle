@@ -2,12 +2,12 @@
 
 ## windows powershell install
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Ayax50000/dbx/v1.0.0/install-remote.ps1)))
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.ps1)))
 ```
 
 ## mac/linux bash install
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ayax50000/dbx/v1.0.0/install-remote.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.0/install-remote.sh | bash
 ```
 
 Detailed installation documentation (Windows + Linux/macOS, including installer parameters) is in [INSTALL.md](INSTALL.md).
