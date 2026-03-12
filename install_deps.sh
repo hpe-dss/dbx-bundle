@@ -141,8 +141,55 @@ ensure_python() {
   fail "Python installation finished but no suitable interpreter was found in PATH."
 }
 
+resolve_poetry_cmd() {
+  if command_exists poetry; then
+    command -v poetry
+    return 0
+  fi
+  return 1
+}
+
+get_poetry_version() {
+  local poetry_cmd="$1"
+  local output=""
+
+  [[ -n "$poetry_cmd" && -x "$poetry_cmd" ]] || return 1
+
+  output="$("$poetry_cmd" --version 2>/dev/null || true)"
+  [[ -n "$output" ]] || return 1
+
+  if [[ "$output" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+    printf "%s" "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
+}
+
+uninstall_poetry() {
+  local installer_script=""
+
+  log "Removing existing Poetry installation artifacts (best effort)."
+
+  if command_exists curl; then
+    installer_script="$(curl -fsSL https://install.python-poetry.org || true)"
+  elif command_exists wget; then
+    installer_script="$(wget -qO- https://install.python-poetry.org || true)"
+  fi
+
+  if [[ -n "$installer_script" ]]; then
+    printf "%s" "$installer_script" | "$PYTHON_BIN" - --uninstall >/dev/null 2>&1 || true
+  fi
+
+  rm -f \
+    "$HOME/.local/bin/poetry" \
+    "$HOME/.local/bin/poetry.exe" \
+    "$HOME/.local/bin/poetry.bat" \
+    "$HOME/.local/bin/poetry.cmd" || true
+}
+
 install_poetry() {
-  log "Poetry not found. Installing Poetry for current user."
+  log "Installing Poetry for current user."
 
   if ! command_exists curl && ! command_exists wget; then
     fail "Poetry installer requires curl or wget. Install one of them and retry."
@@ -165,17 +212,45 @@ install_poetry() {
   fi
 
   export PATH="$HOME/.local/bin:$PATH"
-  command_exists poetry || fail "Poetry installation did not produce a usable 'poetry' command."
+  local poetry_cmd=""
+  poetry_cmd="$(resolve_poetry_cmd || true)"
+  [[ -n "$poetry_cmd" ]] || fail "Poetry installation did not produce a usable 'poetry' command."
 }
 
 ensure_poetry() {
-  if command_exists poetry; then
-    log "Poetry detected: $(command -v poetry)"
-    return 0
+  local poetry_cmd=""
+  local current_version=""
+  local reinstall_reason=""
+
+  poetry_cmd="$(resolve_poetry_cmd || true)"
+  if [[ -n "$poetry_cmd" ]]; then
+    if ! current_version="$(get_poetry_version "$poetry_cmd")"; then
+      reinstall_reason="Poetry detected at $poetry_cmd but failed to report a valid version."
+    elif [[ -n "$POETRY_VERSION" && "$current_version" != "$POETRY_VERSION" ]]; then
+      reinstall_reason="Poetry version $current_version does not match POETRY_VERSION=$POETRY_VERSION."
+    else
+      log "Poetry detected: $poetry_cmd (version $current_version)"
+      return 0
+    fi
+  else
+    reinstall_reason="Poetry is not installed."
   fi
 
+  log "$reinstall_reason"
+  uninstall_poetry
   install_poetry
-  log "Poetry installed: $(command -v poetry)"
+
+  poetry_cmd="$(resolve_poetry_cmd || true)"
+  [[ -n "$poetry_cmd" ]] || fail "Poetry installed but command was not found in PATH."
+
+  current_version="$(get_poetry_version "$poetry_cmd" || true)"
+  [[ -n "$current_version" ]] || fail "Poetry installed but failed to report a valid version."
+
+  if [[ -n "$POETRY_VERSION" && "$current_version" != "$POETRY_VERSION" ]]; then
+    fail "Poetry installed version $current_version does not match requested POETRY_VERSION=$POETRY_VERSION."
+  fi
+
+  log "Poetry installed: $poetry_cmd (version $current_version)"
 }
 
 ensure_poetry_non_package_mode() {

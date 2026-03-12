@@ -108,9 +108,19 @@ function Get-PoetryBinDirs {
     $dirs = @()
 
     if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
-        $dirs += (Join-Path $env:APPDATA 'Python\Scripts')
         $dirs += (Join-Path $env:APPDATA 'pypoetry\venv\Scripts')
         $dirs += (Join-Path $env:APPDATA 'pypoetry\bin')
+        $dirs += (Join-Path $env:APPDATA 'Python\Scripts')
+
+        $versionedPythonRoot = Join-Path $env:APPDATA 'Python'
+        if (Test-Path -LiteralPath $versionedPythonRoot -PathType Container) {
+            $versionedScriptDirs = Get-ChildItem -LiteralPath $versionedPythonRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^Python\d+$' } |
+                ForEach-Object { Join-Path $_.FullName 'Scripts' }
+            if ($versionedScriptDirs) {
+                $dirs += $versionedScriptDirs
+            }
+        }
     }
 
     $dirs += (Join-Path $HOME '.local\bin')
@@ -191,9 +201,16 @@ function Is-PoetryVersionCompatible([version]$Version) {
     return ($Version -ge $poetryMinVersion -and $Version -lt $poetryMaxExclusiveVersion)
 }
 
-function Uninstall-Poetry([string]$PyLauncherPath, [string]$InstallerScript) {
+function Uninstall-Poetry([string]$PythonRunnerPath, [string]$InstallerScript) {
     Log 'Uninstalling current Poetry.'
-    $InstallerScript | & $PyLauncherPath - --uninstall | Out-Host
+    if (-not [string]::IsNullOrWhiteSpace($PythonRunnerPath) -and (Test-Path -LiteralPath $PythonRunnerPath -PathType Leaf)) {
+        try {
+            $InstallerScript | & $PythonRunnerPath - --uninstall | Out-Host
+        }
+        catch {
+            Log 'Poetry uninstall command failed. Continuing with filesystem cleanup.'
+        }
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
         $poetryHome = Join-Path $env:APPDATA 'pypoetry'
@@ -982,19 +999,6 @@ function Resolve-PythonFromPyenv([string]$PyenvCmd) {
             return $candidate
         }
     }
-
-    $shimCandidates = @(
-        (Join-Path $pyenvRoot 'shims/python.exe'),
-        (Join-Path $pyenvRoot 'shims/python.bat'),
-        (Join-Path $pyenvRoot 'shims/python.cmd')
-    )
-
-    foreach ($shim in $shimCandidates) {
-        if (Test-Path -LiteralPath $shim -PathType Leaf) {
-            return $shim
-        }
-    }
-
     return $null
 }
 
@@ -1029,7 +1033,14 @@ function Ensure-Python313([string]$PyenvCmd) {
     & $PyenvCmd rehash | Out-Host
     Assert-LastExitCode -Context 'pyenv rehash'
 
-    $pythonBin = Resolve-PythonFromPyenv -PyenvCmd $PyenvCmd
+    $preferredPythonBin = Join-Path $pyenvRoot "versions/$targetVersion/python.exe"
+    $pythonBin = $null
+    if (Test-Path -LiteralPath $preferredPythonBin -PathType Leaf) {
+        $pythonBin = $preferredPythonBin
+    }
+    else {
+        $pythonBin = Resolve-PythonFromPyenv -PyenvCmd $PyenvCmd
+    }
     if (-not $pythonBin) {
         Fail "Python executable could not be resolved from pyenv at $pyenvRoot."
     }
@@ -1041,18 +1052,8 @@ function Ensure-Python313([string]$PyenvCmd) {
 }
 
 function Ensure-Poetry([string]$PythonBin) {
-    $pyLauncher = Get-Command -Name py -ErrorAction SilentlyContinue
-
-    $installRunners = @()
-    if (-not [string]::IsNullOrWhiteSpace($PythonBin) -and (Test-Path -LiteralPath $PythonBin -PathType Leaf)) {
-        $installRunners += $PythonBin
-    }
-    if ($pyLauncher -and -not [string]::IsNullOrWhiteSpace($pyLauncher.Source)) {
-        $installRunners += $pyLauncher.Source
-    }
-    $installRunners = @($installRunners | Select-Object -Unique)
-    if ($installRunners.Count -eq 0) {
-        Fail "No Python runner found for Poetry install. Expected configured Python interpreter or Python launcher 'py'."
+    if ([string]::IsNullOrWhiteSpace($PythonBin) -or -not (Test-Path -LiteralPath $PythonBin -PathType Leaf)) {
+        Fail 'No valid configured Python interpreter was provided for Poetry install.'
     }
 
     $installerScript = (Invoke-WebRequest -Uri 'https://install.python-poetry.org' -UseBasicParsing).Content
@@ -1119,7 +1120,7 @@ function Ensure-Poetry([string]$PythonBin) {
     }
 
     if ($needsUninstall) {
-        Uninstall-Poetry -PyLauncherPath $installRunners[0] -InstallerScript $installerScript
+        Uninstall-Poetry -PythonRunnerPath $PythonBin -InstallerScript $installerScript
     }
 
     if (-not $shouldInstall) {
@@ -1138,28 +1139,9 @@ function Ensure-Poetry([string]$PythonBin) {
             Log "Using POETRY_VERSION=$poetryVersion"
         }
 
-        $installError = $null
-        $installed = $false
-        foreach ($runner in $installRunners) {
-            try {
-                Log "Installing Poetry with official installer using: $runner -"
-                $installerScript | & $runner - | Out-Host
-                Assert-LastExitCode -Context "official Poetry installer ($runner -)"
-                $installed = $true
-                break
-            }
-            catch {
-                $installError = $_
-                Log "Poetry installer attempt failed with $runner. Trying next available Python runner if any."
-            }
-        }
-
-        if (-not $installed) {
-            if ($installError) {
-                throw $installError
-            }
-            Fail 'official Poetry installer failed.'
-        }
+        Log "Installing Poetry with official installer using configured Python: $PythonBin -"
+        $installerScript | & $PythonBin - | Out-Host
+        Assert-LastExitCode -Context "official Poetry installer ($PythonBin -)"
     }
     finally {
         if ($hadPoetryVersion) {
