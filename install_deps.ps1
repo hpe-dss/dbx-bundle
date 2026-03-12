@@ -170,7 +170,13 @@ function Get-PoetryVersion([string]$PoetryCmd) {
         return $null
     }
 
-    $rawOutput = @(& $PoetryCmd --version 2>$null)
+    try {
+        $rawOutput = @(& $PoetryCmd --version 2>$null)
+    }
+    catch {
+        return $null
+    }
+
     if ($LASTEXITCODE -ne 0) {
         return $null
     }
