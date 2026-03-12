@@ -192,7 +192,7 @@ dbx bundle rb-compile -t dev
 
 What it can do:
 
-- Install latest CLI when no version is passed.
+- Install a stable default CLI when no version is passed (penultimate semantic version; fallback to latest if needed).
 - Install a specific version (`0.289.1` or `v0.289.1`).
 - Skip work if current version already matches requested version.
 - Upgrade to newer version and print changelog links.
@@ -202,7 +202,7 @@ What it can do:
 Version resolution:
 
 - If you pass a version argument, that version is used.
-- If not passed, latest stable semantic version is resolved from:
+- If not passed, default stable semantic version is resolved (penultimate semantic version; fallback to latest if needed) from:
   - GitHub tags page (`databricks/cli/tags`), then
   - GitHub tags API fallback.
 
@@ -219,7 +219,7 @@ Platform behavior differences:
 Parameters:
 
 - Positional `version`:
-  - `set-databricks-cli` -> latest.
+  - `set-databricks-cli` -> default stable (penultimate semantic version; fallback to latest if needed).
   - `set-databricks-cli 0.289.1` -> exact version.
   - `set-databricks-cli v0.289.1` -> exact version (prefix normalized).
 - Linux/macOS env vars:

@@ -38,21 +38,41 @@ function Parse-SemVer([string]$Value) {
     return [version]$normalized
 }
 
-function Resolve-LatestVersionFromTagsPage {
-    $html = Invoke-WebRequest -Uri $tagsUrl -UseBasicParsing
-    $matches = [regex]::Matches($html.Content, 'v(\d+\.\d+\.\d+)')
-    foreach ($m in $matches) {
-        return $m.Groups[1].Value
+function Select-DefaultStableVersion([string[]]$Versions) {
+    $ordered = @(
+        $Versions |
+        Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
+        Select-Object -Unique |
+        Sort-Object { [version]$_ } -Descending
+    )
+
+    if ($ordered.Count -eq 0) {
+        return $null
     }
-    return $null
+
+    if ($ordered.Count -ge 2) {
+        return $ordered[1]
+    }
+
+    return $ordered[0]
 }
 
-function Resolve-LatestVersionFromApi {
+function Resolve-DefaultVersionFromTagsPage {
+    $html = Invoke-WebRequest -Uri $tagsUrl -UseBasicParsing
+    $matches = [regex]::Matches($html.Content, 'v(\d+\.\d+\.\d+)')
+    $versions = @()
+    foreach ($m in $matches) {
+        $versions += $m.Groups[1].Value
+    }
+    return (Select-DefaultStableVersion -Versions $versions)
+}
+
+function Resolve-DefaultVersionFromApi {
     $versions = Get-SemverTagsFromApi
     if ($versions.Count -eq 0) {
         return $null
     }
-    return ($versions | Sort-Object { [version]$_ } -Descending | Select-Object -First 1)
+    return (Select-DefaultStableVersion -Versions $versions)
 }
 
 function Resolve-TargetVersion {
@@ -60,14 +80,14 @@ function Resolve-TargetVersion {
         return (Normalize-Version $Version)
     }
 
-    $latest = Resolve-LatestVersionFromTagsPage
-    if ([string]::IsNullOrWhiteSpace($latest)) {
-        $latest = Resolve-LatestVersionFromApi
+    $defaultVersion = Resolve-DefaultVersionFromTagsPage
+    if ([string]::IsNullOrWhiteSpace($defaultVersion)) {
+        $defaultVersion = Resolve-DefaultVersionFromApi
     }
-    if ([string]::IsNullOrWhiteSpace($latest)) {
-        Fail 'Could not resolve latest Databricks CLI version from tags.'
+    if ([string]::IsNullOrWhiteSpace($defaultVersion)) {
+        Fail 'Could not resolve default Databricks CLI version from tags.'
     }
-    return $latest
+    return $defaultVersion
 }
 
 function Detect-Os {
@@ -216,6 +236,10 @@ function Install-OrUpdateCli {
     $currentVersion = Get-InstalledVersion
     $os = Detect-Os
     $arch = Detect-Arch
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        Log "No Databricks CLI version was provided. Using default stable version v$targetVersion (penultimate semantic tag, fallback to latest if needed)."
+    }
 
     Ensure-CliOnPath
 

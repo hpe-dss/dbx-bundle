@@ -5,8 +5,9 @@ set -euo pipefail
 #
 # Version resolution strategy:
 # 1) First positional argument (if provided)
-# 2) Latest stable semantic tag from https://github.com/databricks/cli/tags
-#    (fallback to GitHub tags API if needed)
+# 2) Default stable semantic tag from https://github.com/databricks/cli/tags:
+#    penultimate stable version (fallback to latest if fewer than 2 versions)
+#    and fallback to GitHub tags API if needed.
 #
 # Optional environment variables:
 #   INSTALL_BIN_DIR         Destination directory for databricks binary
@@ -72,19 +73,23 @@ normalize_version() {
 }
 
 resolve_latest_version_from_tags_page() {
-  # Parse first semver tag, skipping non-semver tags like "snapshot".
+  # Pick the penultimate stable semantic version (fallback to latest if needed).
   http_get "$TAGS_URL" \
     | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' \
-    | head -n1 \
-    | sed 's/^v//'
+    | sed 's/^v//' \
+    | sort -Vr \
+    | awk '!seen[$0]++' \
+    | awk 'NR==2 { print; found=1; exit } END { if (!found && NR>=1) print $1 }'
 }
 
 resolve_latest_version_from_api() {
   http_get "$GITHUB_TAGS_API_URL" \
     | grep -oE '"name"[[:space:]]*:[[:space:]]*"v[0-9]+\.[0-9]+\.[0-9]+"' \
-    | head -n1 \
     | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' \
-    | sed 's/^v//'
+    | sed 's/^v//' \
+    | sort -Vr \
+    | awk '!seen[$0]++' \
+    | awk 'NR==2 { print; found=1; exit } END { if (!found && NR>=1) print $1 }'
 }
 
 resolve_target_version() {
@@ -93,13 +98,13 @@ resolve_target_version() {
     return 0
   fi
 
-  local latest=""
-  latest="$(resolve_latest_version_from_tags_page || true)"
-  if [[ -z "$latest" ]]; then
-    latest="$(resolve_latest_version_from_api || true)"
+  local selected_version=""
+  selected_version="$(resolve_latest_version_from_tags_page || true)"
+  if [[ -z "$selected_version" ]]; then
+    selected_version="$(resolve_latest_version_from_api || true)"
   fi
-  [[ -n "$latest" ]] || fail "Could not resolve latest Databricks CLI version from tags."
-  printf "%s" "$latest"
+  [[ -n "$selected_version" ]] || fail "Could not resolve default Databricks CLI version from tags."
+  printf "%s" "$selected_version"
 }
 
 detect_os() {
@@ -283,6 +288,10 @@ install_or_update_cli() {
   os="$(detect_os)"
   arch="$(detect_arch)"
   should_show_changelog=false
+
+  if [[ -z "$REQUESTED_VERSION" ]]; then
+    log "No Databricks CLI version was provided. Using default stable version v${target_version} (penultimate semantic tag, fallback to latest if needed)."
+  fi
 
   ensure_cli_on_path
 

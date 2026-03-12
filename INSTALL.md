@@ -27,7 +27,7 @@ Two entry points are supported:
 
 ### Remote Bootstrap
 
-Default install (latest Databricks CLI version):
+Default install (stable default Databricks CLI version: penultimate semantic tag, fallback to latest if needed):
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/hpe-dss/dbx-bundle/v1.0.1/install-remote.ps1)))
@@ -91,7 +91,7 @@ Common variants:
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `Clean` | switch | false | Recreates local dependency state (`Poetry`, `.venv`, and Python toolchain path depending on mode). |
-| `UsePyenv` | switch | false | `true`: manage Python via `pyenv-win`; `false`: use/install Python `3.13.x` directly (winget package `Python.Python.3.13`). |
+| `UsePyenv` | switch | false | `true`: manage Python via `pyenv-win` (default patch selection uses the penultimate available `3.13.x` patch, fallback to latest if needed); `false`: use/install Python `3.13.x` directly (winget package `Python.Python.3.13`). |
 
 Related environment variables read by `install_deps.ps1`:
 
@@ -104,7 +104,7 @@ Related environment variables read by `install_deps.ps1`:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `Version` | positional string | empty | Requested Databricks CLI version. If omitted, latest is resolved. |
+| `Version` | positional string | empty | Requested Databricks CLI version. If omitted, stable default is resolved (penultimate semantic tag, fallback to latest if needed). |
 | `InstallBinDir` | string | `$HOME\.local\bin` or env `INSTALL_BIN_DIR` | Destination folder for `databricks.exe`. |
 | `Clean` | switch | false | Forces reinstall even if target version is already installed. |
 
@@ -186,7 +186,7 @@ PYTHON_VERSION=3.13 ./install.sh
 
 | Input | Default | Description |
 |---|---|---|
-| positional `version` | empty | Databricks CLI version. If omitted, latest semantic version is resolved. |
+| positional `version` | empty | Databricks CLI version. If omitted, stable default semantic version is resolved (penultimate semantic tag, fallback to latest if needed). |
 | `INSTALL_BIN_DIR` | `$HOME/.local/bin` | Destination for `databricks` binary. |
 | `ALLOW_SUDO_INSTALL` | `true` | Allow sudo for package installs (for example `unzip` if missing). |
 

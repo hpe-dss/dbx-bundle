@@ -943,7 +943,7 @@ function Get-PyenvInstalledVersions([string]$PyenvCmd) {
     return @($installed | Where-Object { $_ -match '^\d+\.\d+\.\d+$' } | Select-Object -Unique)
 }
 
-function Resolve-LatestPatchVersion([string]$PyenvCmd, [string]$MajorMinor) {
+function Resolve-PreferredPatchVersion([string]$PyenvCmd, [string]$MajorMinor) {
     $list = & $PyenvCmd install --list
     if ($LASTEXITCODE -ne 0) {
         $list = & $PyenvCmd install -l
@@ -961,7 +961,17 @@ function Resolve-LatestPatchVersion([string]$PyenvCmd, [string]$MajorMinor) {
         Fail "Could not find installable Python versions for $MajorMinor in pyenv."
     }
 
-    return ($candidates | Sort-Object { [version]$_ } | Select-Object -Last 1)
+    $ordered = @(
+        $candidates |
+        Select-Object -Unique |
+        Sort-Object { [version]$_ }
+    )
+
+    if ($ordered.Count -ge 2) {
+        return $ordered[-2]
+    }
+
+    return $ordered[-1]
 }
 
 function Resolve-PythonFromPyenv([string]$PyenvCmd) {
@@ -989,8 +999,10 @@ function Resolve-PythonFromPyenv([string]$PyenvCmd) {
 }
 
 function Ensure-Python313([string]$PyenvCmd) {
-    $targetVersion = Resolve-LatestPatchVersion -PyenvCmd $PyenvCmd -MajorMinor $pythonMajorMinor
+    $targetVersion = Resolve-PreferredPatchVersion -PyenvCmd $PyenvCmd -MajorMinor $pythonMajorMinor
     $installed = Get-PyenvInstalledVersions -PyenvCmd $PyenvCmd
+
+    Log "No explicit Python patch was provided. Using default stable Python $targetVersion for $pythonMajorMinor (penultimate available patch, fallback to latest if needed)."
 
     if ($Clean -and ($installed -contains $targetVersion)) {
         Log "Clean mode enabled: removing Python $targetVersion before reinstall"
